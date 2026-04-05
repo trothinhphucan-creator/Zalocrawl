@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zalo Scraper — Dashboard</title>
+  <meta name="description" content="Dashboard điều khiển Zalo PC Scraper — cào dữ liệu chat và đẩy lên CRM nội bộ." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <style>
+    /* ══════════════════════════════════════════
+       DESIGN TOKENS & RESET
+    ══════════════════════════════════════════ */
+    :root {
+      --bg-base:       #080c14;
+      --bg-card:       rgba(255,255,255,0.04);
+      --bg-card-hover: rgba(255,255,255,0.07);
+      --border:        rgba(255,255,255,0.08);
+      --border-glow:   rgba(99,179,237,0.35);
+
+      --accent:        #63b3ed;
+      --accent-2:      #9f7aea;
+      --success:       #68d391;
+      --warning:       #f6ad55;
+      --danger:        #fc8181;
+
+      --text-primary:  #e8f0fe;
+      --text-secondary:#8b9dc3;
+      --text-muted:    #4a5568;
+
+      --font-sans:     'Inter', sans-serif;
+      --font-mono:     'JetBrains Mono', monospace;
+
+      --radius-sm:     8px;
+      --radius-md:     14px;
+      --radius-lg:     20px;
+      --shadow-glow:   0 0 40px rgba(99,179,237,0.12);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Ambient background blobs */
+    body::before, body::after {
+      content: '';
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(120px);
+      pointer-events: none;
+      z-index: 0;
+    }
+    body::before {
+      width: 600px; height: 600px;
+      background: radial-gradient(circle, rgba(99,179,237,0.08) 0%, transparent 70%);
+      top: -200px; left: -200px;
+    }
+    body::after {
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(159,122,234,0.07) 0%, transparent 70%);
+      bottom: -150px; right: -100px;
+    }
+
+    /* ══════════════════════════════════════════
+       LAYOUT
+    ══════════════════════════════════════════ */
+    .app-wrapper { position: relative; z-index: 1; }
+
+    /* ── TOPBAR ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 32px;
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+      background: rgba(8,12,20,0.80);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .topbar-brand {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand-icon {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, #63b3ed, #9f7aea);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 4px 20px rgba(99,179,237,0.35);
+    }
+    .brand-name {
+      font-size: 17px; font-weight: 700;
+      background: linear-gradient(135deg, #63b3ed, #9f7aea);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      letter-spacing: -0.3px;
+    }
+    .brand-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+
+    .topbar-right { display: flex; align-items: center; gap: 14px; }
+
+    .status-pill {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px; font-weight: 600;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      transition: all .3s;
+    }
+    .status-pill.running {
+      border-color: rgba(104,211,145,0.4);
+      background: rgba(104,211,145,0.08);
+      color: var(--success);
+    }
+    .status-pill.idle { color: var(--text-secondary); }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: currentColor;
+    }
+    .dot.pulse { animation: pulse-dot 1.5s ease-in-out infinite; }
+    @keyframes pulse-dot {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: .4; transform: scale(1.4); }
+    }
+
+    /* ── MAIN GRID ── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 24px;
+      padding: 28px 32px;
+      max-width: 1440px;
+      margin: 0 auto;
+    }
+
+    /* ── CARDS ── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      backdrop-filter: blur(20px);
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .card:hover { border-color: var(--border-glow); box-shadow: var(--shadow-glow); }
+    .card-header {
+      padding: 20px 24px 0;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .card-title {
+      font-size: 13px; font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: 1px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card-title i { color: var(--accent); }
+    .card-body { padding: 20px 24px; }
+
+    /* ══════════════════════════════════════════
+       LEFT COLUMN
+    ══════════════════════════════════════════ */
+    .left-col {
+      display: flex; flex-direction: column; gap: 20px;
+      grid-row: span 2;
+    }
+
+    /* ── CONTROL PANEL ── */
+    .control-panel .card-body { display: flex; flex-direction: column; gap: 18px; }
+
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-label {
+      font-size: 12px; font-weight: 500;
+      color: var(--text-secondary);
+    }
+    .form-input {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      transition: border-color .25s, box-shadow .25s;
+      outline: none;
+      width: 100%;
+    }
+    .form-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(99,179,237,0.15);
+    }
+    .form-input-mono { font-family: var(--font-mono); font-size: 12.5px; }
+
+    .range-row { display: flex; align-items: center; gap: 12px; }
+    .range-val {
+      min-width: 42px; text-align: right;
+      font-size: 14px; font-weight: 600;
+      color: var(--accent);
+    }
+    input[type=range] {
+      flex: 1; -webkit-appearance: none; appearance: none;
+      height: 4px;
+      background: linear-gradient(to right, var(--accent) var(--pct,50%), rgba(255,255,255,0.1) var(--pct,50%));
+      border-radius: 4px; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(99,179,237,0.6);
+      transition: transform .15s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+    /* ── BUTTONS ── */
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 9px;
+      padding: 12px 20px;
+      border-radius: var(--radius-md);
+      font-family: var(--font-sans);
+      font-size: 14px; font-weight: 600;
+      cursor: pointer; border: none;
+      transition: all .25s;
+      position: relative; overflow: hidden;
+    }
+    .btn::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: white;
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    .btn:hover::after { opacity: 0.06; }
+    .btn:active { transform: scale(0.97); }
+
+    .btn-start {
+      background: linear-gradient(135deg, #63b3ed, #4299e1);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(99,179,237,0.35);
+      width: 100%;
+    }
+    .btn-start:hover { box-shadow: 0 6px 28px rgba(99,179,237,0.5); }
+    .btn-start:disabled {
+      opacity: 0.4; cursor: not-allowed; pointer-events: none;
+    }
+
+    .btn-stop {
+      background: linear-gradient(135deg, #fc8181, #e53e3e);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(252,129,129,0.3);
+      width: 100%;
+    }
+    .btn-stop:hover { box-shadow: 0 6px 28px rgba(252,129,129,0.45); }
+    .btn-stop:disabled {
+      opacity: 0.4; cursor: not-allowed; pointer-events: none;
+    }
+
+    /* Spinner inside btn */
+    .btn-spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    .btn.loading .btn-spinner { display: block; }
+    .btn.loading .btn-text { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .btn-row { display: flex; gap: 10px; }
+    .btn-row .btn { flex: 1; }
+
+    /* ── PROGRESS RING ── */
+    .progress-ring-wrap {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 8px; padding: 4px 0;
+    }
+    .ring-svg { transform: rotate(-90deg); }
+    .ring-bg { fill: none; stroke: rgba(255,255,255,0.07); stroke-width: 6; }
+    .ring-fg {
+      fill: none;
+      stroke: url(#ringGrad);
+      stroke-width: 6;
+      stroke-linecap: round;
+      stroke-dasharray: 251.2;
+      stroke-dashoffset: 251.2;
+      transition: stroke-dashoffset 1s ease;
+    }
+    .ring-label {
+      position: absolute;
+      font-size: 20px; font-weight: 700;
+      color: var(--text-primary);
+    }
+    .ring-container {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      width: 90px; height: 90px;
+    }
+    .ring-sub {
+      font-size: 11px; color: var(--text-muted); text-align: center;
+    }
+
+    /* ══════════════════════════════════════════
+       STATS CARDS (top-right)
+    ══════════════════════════════════════════ */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex; align-items: flex-start; gap: 14px;
+      transition: all .3s;
+      cursor: default;
+    }
+    .stat-card:hover {
+      border-color: var(--border-glow);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .stat-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    .stat-icon.blue   { background: rgba(99,179,237,0.12); color: var(--accent); }
+    .stat-icon.green  { background: rgba(104,211,145,0.12); color: var(--success); }
+    .stat-icon.purple { background: rgba(159,122,234,0.12); color: var(--accent-2); }
+    .stat-icon.orange { background: rgba(246,173,85,0.12);  color: var(--warning); }
+    .stat-info { flex: 1; min-width: 0; }
+    .stat-val {
+      font-size: 28px; font-weight: 700;
+      line-height: 1; letter-spacing: -1px;
+      transition: all .4s;
+    }
+    .stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+    /* ══════════════════════════════════════════
+       LOG TERMINAL
+    ══════════════════════════════════════════ */
+    .log-terminal {
+      flex: 1;
+      background: #060b10;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      display: flex; flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .terminal-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .terminal-dots { display: flex; gap: 7px; }
+    .terminal-dots span {
+      width: 12px; height: 12px; border-radius: 50%;
+    }
+    .terminal-dots .d1 { background: #fc8181; }
+    .terminal-dots .d2 { background: #f6ad55; }
+    .terminal-dots .d3 { background: #68d391; }
+    .terminal-title {
+      font-size: 12px; font-weight: 500; color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+    .terminal-actions { display: flex; gap: 8px; }
+    .terminal-btn {
+      background: none; border: 1px solid var(--border);
+      color: var(--text-secondary); border-radius: 6px;
+      padding: 4px 10px; font-size: 11px; cursor: pointer;
+      font-family: var(--font-sans); font-weight: 500;
+      transition: all .2s;
+    }
+    .terminal-btn:hover {
+      border-color: var(--accent); color: var(--accent);
+      background: rgba(99,179,237,0.08);
+    }
+
+    .log-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.7;
+      scroll-behavior: smooth;
+    }
+    .log-body::-webkit-scrollbar { width: 4px; }
+    .log-body::-webkit-scrollbar-track { background: transparent; }
+    .log-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+    .log-line {
+      display: flex; gap: 10px;
+      padding: 1px 0;
+      animation: fadeInUp .2s ease;
+    }
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .log-time { color: var(--text-muted); flex-shrink: 0; }
+    .log-msg { flex: 1; word-break: break-all; }
+    .log-line.INFO    .log-msg { color: var(--text-secondary); }
+    .log-line.SUCCESS .log-msg { color: var(--success); }
+    .log-line.WARNING .log-msg { color: var(--warning); }
+    .log-line.ERROR   .log-msg { color: var(--danger); }
+
+    /* ══════════════════════════════════════════
+       CONTACT TABLE
+    ══════════════════════════════════════════ */
+    .contact-table-wrap {
+      overflow-x: auto;
+    }
+    .contact-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }
+    .contact-table th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .contact-table td {
+      padding: 11px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: var(--text-secondary);
+    }
+    .contact-table tr:last-child td { border-bottom: none; }
+    .contact-table tr:hover td { background: rgba(255,255,255,0.025); }
+    .contact-table .name-cell {
+      font-weight: 500; color: var(--text-primary);
+      display: flex; align-items: center; gap: 9px;
+    }
+    .avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+    }
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 9px; border-radius: 20px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-success { background: rgba(104,211,145,0.12); color: var(--success); }
+    .badge-danger  { background: rgba(252,129,129,0.12); color: var(--danger); }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center; padding: 40px 20px;
+      color: var(--text-muted); font-size: 13px;
+    }
+    .empty-state i { font-size: 36px; margin-bottom: 12px; display: block; opacity: .3; }
+
+    /* ══════════════════════════════════════════
+       ACTIVE TARGET BANNER
+    ══════════════════════════════════════════ */
+    .active-target {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 20px;
+      background: rgba(99,179,237,0.06);
+      border: 1px solid rgba(99,179,237,0.2);
+      border-radius: var(--radius-md);
+      transition: all .4s;
+    }
+    .active-target.hidden { opacity: 0; pointer-events: none; }
+    .target-pulse {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 0 0 rgba(104,211,145,0.6);
+      animation: ping 1.5s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes ping {
+      0%  { box-shadow: 0 0 0 0   rgba(104,211,145,0.6); }
+      70% { box-shadow: 0 0 0 8px rgba(104,211,145,0); }
+      100%{ box-shadow: 0 0 0 0   rgba(104,211,145,0); }
+    }
+    .target-label { font-size: 11px; color: var(--text-muted); }
+    .target-name  { font-size: 14px; font-weight: 600; color: var(--text-primary); margin-top: 1px; }
+
+    /* ══════════════════════════════════════════
+       ELAPSED TIMER
+    ══════════════════════════════════════════ */
+    .elapsed-display {
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 22px; font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: 2px;
+    }
+
+    /* Divider */
+    .divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+    /* ══════════════════════════════════════════
+       RESPONSIVE
+    ══════════════════════════════════════════ */
+    @media (max-width: 1100px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .left-col  { grid-row: auto; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 640px) {
+      .main-grid { padding: 16px; gap: 16px; }
+      .topbar    { padding: 14px 16px; }
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-wrapper">
+
+  <!-- ── TOPBAR ── -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="brand-icon">🤖</div>
+      <div>
+        <div class="brand-name">Zalo Scraper</div>
+        <div class="brand-sub">RPA Dashboard — Antigravity v1.0</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="status-pill idle" id="statusPill">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Đang chờ</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── MAIN ── -->
+  <main class="main-grid">
+
+    <!-- ══ LEFT COLUMN ══ -->
+    <aside class="left-col">
+
+      <!-- Control Panel -->
+      <div class="card control-panel">
+        <div class="card-header">
+          <span class="card-title"><i class="fa-solid fa-sliders"></i> Cấu hình</span>
+        </div>
+        <div class="card-body">
+
+          <div class="form-group">
+            <label class="form-label">API Endpoint</label>
+            <input class="form-input form-input-mono" id="cfgEndpoint"
+                   value="http://localhost:3000/api/crm/import-chats"
+                   placeholder="http://localhost:3000/..." />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Secret Key</label>
+            <input class="form-input form-input-mono" id="cfgSecret"
+                   type="password" value="antigravity_secret_2026" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Số người cần cào</label>
+            <div class="range-row">
+              <input type="range" id="cfgLimit" min="1" max="500" value="100"
+                     oninput="updateRange(this)" style="--pct:20%" />
+              <span class="range-val" id="cfgLimitVal">100</span>
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- Progress Ring + Elapsed -->
+          <div class="progress-ring-wrap">
+            <div class="ring-container">
+              <svg class="ring-svg" width="90" height="90">
+                <defs>
+                  <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#63b3ed" />
+                    <stop offset="100%" stop-color="#9f7aea" />
+                  </linearGradient>
+                </defs>
+                <circle class="ring-bg" cx="45" cy="45" r="40" />
+                <circle class="ring-fg" id="ringFg" cx="45" cy="45" r="40" />
+              </svg>
+              <span class="ring-label" id="ringPct">0%</span>
+            </div>
+            <div class="ring-sub" id="ringDetail">0 / 0 người</div>
+          </div>
+
+          <div class="elapsed-display" id="elapsed">00:00:00</div>
+
+          <div class="divider"></div>
+
+          <!-- Active target -->
+          <div class="active-target hidden" id="activeTarget">
+            <div class="target-pulse"></div>
+            <div>
+              <div class="target-label">Đang cào</div>
+              <div class="target-name" id="targetName">—</div>
+            </div>
+          </div>
+
+          <!-- Buttons -->
+          <div class="btn-row">
+            <button class="btn btn-start" id="btnStart" onclick="startScraper()">
+              <div class="btn-spinner"></div>
+              <span class="btn-text"><i class="fa-solid fa-play"></i> Bắt đầu</span>
+            </button>
+            <button class="btn btn-stop" id="btnStop" disabled onclick="stopScraper()">
+              <i class="fa-solid fa-stop"></i> Dừng
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ══ RIGHT COLUMN ══ -->
+    <div style="display:flex;flex-direction:column;gap:20px;min-height:0;">
+
+      <!-- Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon blue"><i class="fa-solid fa-users"></i></div>
+          <div class="stat-info">
+            <div class="stat-val" id="statScraped">0</div>
+            <div class="stat-label">Đã cào</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon green"><i class="fa-solid fa-circle-check"></i></div>
+          <div class="stat-info">
+            <div class="stat-val" id="statPushed">0</div>
+            <div class="stat-label">Push thành công</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon purple"><i class="fa-solid fa-message"></i></div>
+          <div class="stat-info">
+            <div class="stat-val" id="statMessages">0</div>
+            <div class="stat-label">Tin nhắn</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon orange"><i class="fa-solid fa-triangle-exclamation"></i></div>
+          <div class="stat-info">
+            <div class="stat-val" id="statFailed">0</div>
+            <div class="stat-label">Push thất bại</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Log Terminal -->
+      <div class="log-terminal">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="d1"></span><span class="d2"></span><span class="d3"></span>
+          </div>
+          <span class="terminal-title">zalo_scraper.py — stdout</span>
+          <div class="terminal-actions">
+            <button class="terminal-btn" onclick="toggleAutoScroll()">
+              <i class="fa-solid fa-arrow-down" id="autoScrollIcon"></i>
+              <span id="autoScrollText">Auto-scroll</span>
+            </button>
+            <button class="terminal-btn" onclick="clearLogs()">
+              <i class="fa-solid fa-trash-can"></i> Clear
+            </button>
+          </div>
+        </div>
+        <div class="log-body" id="logBody">
+          <div class="log-line INFO">
+            <span class="log-time">--:--:--</span>
+            <span class="log-msg">Sẵn sàng. Nhấn <strong>Bắt đầu</strong> để khởi chạy scraper...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contact Table -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title"><i class="fa-solid fa-address-book"></i> Danh sách đã cào</span>
+          <span style="font-size:12px;color:var(--text-muted)" id="tableCount">0 người</span>
+        </div>
+        <div class="card-body" style="padding:0 0 4px;">
+          <div class="contact-table-wrap">
+            <table class="contact-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Tên khách hàng</th>
+                  <th>Tin nhắn</th>
+                  <th>Thời gian</th>
+                  <th>Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody id="contactTableBody">
+                <tr>
+                  <td colspan="5">
+                    <div class="empty-state">
+                      <i class="fa-regular fa-folder-open"></i>
+                      Chưa có dữ liệu. Chạy scraper để bắt đầu thu thập.
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right col -->
+  </main>
+</div>
+
+<script>
+  /* ══════════════════════════════════════
+     STATE
+  ══════════════════════════════════════ */
+  let autoScroll = true;
+  let isRunning  = false;
+  let sseSource  = null;
+  let pollTimer  = null;
+  let elapsedTimer = null;
+  let totalMessages = 0;
+  let scrapedList = [];
+  let scrapeLimit = 100;
+
+  /* ══════════════════════════════════════
+     RANGE SLIDER
+  ══════════════════════════════════════ */
+  function updateRange(el) {
+    const pct = ((el.value - el.min) / (el.max - el.min) * 100).toFixed(1);
+    el.style.setProperty('--pct', pct + '%');
+    document.getElementById('cfgLimitVal').textContent = el.value;
+    scrapeLimit = parseInt(el.value);
+  }
+  updateRange(document.getElementById('cfgLimit'));
+
+  /* ══════════════════════════════════════
+     LOG TERMINAL
+  ══════════════════════════════════════ */
+  function appendLog(entry) {
+    const body = document.getElementById('logBody');
+    const line = document.createElement('div');
+    line.className = `log-line ${entry.level || 'INFO'}`;
+    line.innerHTML = `<span class="log-time">${entry.time}</span>
+                      <span class="log-msg">${escapeHtml(entry.message)}</span>`;
+    body.appendChild(line);
+    if (autoScroll) body.scrollTop = body.scrollHeight;
+    // Count messages roughly from parse lines
+    if (entry.message && entry.message.includes('tin nhắn')) {
+      const m = entry.message.match(/(\d+) tin nhắn/);
+      if (m) {
+        totalMessages += parseInt(m[1]);
+        animateStat('statMessages', totalMessages);
+      }
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function clearLogs() {
+    document.getElementById('logBody').innerHTML = '';
+    totalMessages = 0;
+  }
+
+  function toggleAutoScroll() {
+    autoScroll = !autoScroll;
+    document.getElementById('autoScrollIcon').className =
+      autoScroll ? 'fa-solid fa-arrow-down' : 'fa-solid fa-pause';
+    document.getElementById('autoScrollText').textContent =
+      autoScroll ? 'Auto-scroll' : 'Paused';
+  }
+
+  /* ══════════════════════════════════════
+     STAT ANIMATION
+  ══════════════════════════════════════ */
+  function animateStat(id, target) {
+    const el = document.getElementById(id);
+    const current = parseInt(el.textContent) || 0;
+    if (current === target) return;
+    const step = Math.ceil(Math.abs(target - current) / 8);
+    const dir  = target > current ? 1 : -1;
+    let val = current;
+    const iv = setInterval(() => {
+      val += step * dir;
+      if ((dir > 0 && val >= target) || (dir < 0 && val <= target)) {
+        val = target; clearInterval(iv);
+      }
+      el.textContent = val;
+    }, 40);
+  }
+
+  /* ══════════════════════════════════════
+     PROGRESS RING
+  ══════════════════════════════════════ */
+  function updateRing(scraped, limit) {
+    const pct = limit > 0 ? Math.min(scraped / limit, 1) : 0;
+    const circ = 2 * Math.PI * 40;       // r=40
+    const offset = circ * (1 - pct);
+    document.getElementById('ringFg').style.strokeDashoffset = offset;
+    document.getElementById('ringPct').textContent = Math.round(pct * 100) + '%';
+    document.getElementById('ringDetail').textContent = `${scraped} / ${limit} người`;
+  }
+
+  /* ══════════════════════════════════════
+     STATUS UI
+  ══════════════════════════════════════ */
+  function setRunningUI(running) {
+    isRunning = running;
+    const pill = document.getElementById('statusPill');
+    const dot  = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop  = document.getElementById('btnStop');
+
+    if (running) {
+      pill.className = 'status-pill running';
+      dot.classList.add('pulse');
+      text.textContent = 'Đang chạy';
+      btnStart.disabled = true;
+      btnStop.disabled  = false;
+      document.getElementById('activeTarget').classList.remove('hidden');
+    } else {
+      pill.className = 'status-pill idle';
+      dot.classList.remove('pulse');
+      text.textContent = 'Đang chờ';
+      btnStart.disabled = false;
+      btnStop.disabled  = true;
+      document.getElementById('activeTarget').classList.add('hidden');
+      btnStart.classList.remove('loading');
+    }
+  }
+
+  /* ══════════════════════════════════════
+     TABLE
+  ══════════════════════════════════════ */
+  function renderTable(list) {
+    const tbody = document.getElementById('contactTableBody');
+    document.getElementById('tableCount').textContent = list.length + ' người';
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td colspan="5">
+        <div class="empty-state">
+          <i class="fa-regular fa-folder-open"></i>
+          Chưa có dữ liệu.
+        </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.slice().reverse().map((c, i) => {
+      const idx  = list.length - i;
+      const init = (c.name||'?').charAt(0).toUpperCase();
+      const ok   = c.status === 'ok';
+      return `<tr>
+        <td style="color:var(--text-muted)">${idx}</td>
+        <td><div class="name-cell">
+          <div class="avatar">${init}</div>${escapeHtml(c.name||'—')}
+        </div></td>
+        <td>${c.logs || 0}</td>
+        <td style="font-family:var(--font-mono);font-size:12px">${c.time||'—'}</td>
+        <td><span class="badge ${ok?'badge-success':'badge-danger'}">
+          ${ok?'✅ OK':'❌ Lỗi'}
+        </span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  /* ══════════════════════════════════════
+     ELAPSED TIMER (local)
+  ══════════════════════════════════════ */
+  let elapsedSeconds = 0;
+  function startElapsedTimer() {
+    elapsedSeconds = 0;
+    clearInterval(elapsedTimer);
+    elapsedTimer = setInterval(() => {
+      elapsedSeconds++;
+      const h = String(Math.floor(elapsedSeconds/3600)).padStart(2,'0');
+      const m = String(Math.floor((elapsedSeconds%3600)/60)).padStart(2,'0');
+      const s = String(elapsedSeconds%60).padStart(2,'0');
+      document.getElementById('elapsed').textContent = `${h}:${m}:${s}`;
+    }, 1000);
+  }
+  function stopElapsedTimer() { clearInterval(elapsedTimer); }
+
+  /* ══════════════════════════════════════
+     STATUS POLLING
+  ══════════════════════════════════════ */
+  async function pollStatus() {
+    try {
+      const res = await fetch('/api/status');
+      const d   = await res.json();
+
+      animateStat('statScraped', d.totalScraped || 0);
+      animateStat('statPushed',  d.totalPushed  || 0);
+      animateStat('statFailed',  d.totalFailed  || 0);
+      updateRing(d.totalScraped || 0, scrapeLimit);
+
+      if (d.currentName) {
+        document.getElementById('targetName').textContent = d.currentName;
+      }
+
+      if (d.isRunning !== isRunning) {
+        setRunningUI(d.isRunning);
+        if (!d.isRunning) stopElapsedTimer();
+      }
+
+      if (d.scrapedList && d.scrapedList.length) {
+        scrapedList = d.scrapedList;
+        renderTable(scrapedList);
+      }
+    } catch(e) { /* server maybe down */ }
+  }
+
+  /* ══════════════════════════════════════
+     SSE LOG STREAM
+  ══════════════════════════════════════ */
+  function connectSSE() {
+    if (sseSource) { sseSource.close(); sseSource = null; }
+    sseSource = new EventSource('/api/logs/stream');
+    sseSource.onmessage = e => {
+      try { appendLog(JSON.parse(e.data)); } catch(_){}
+    };
+    sseSource.onerror = () => {
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
+  /* ══════════════════════════════════════
+     START / STOP
+  ══════════════════════════════════════ */
+  async function startScraper() {
+    const btn = document.getElementById('btnStart');
+    btn.classList.add('loading');
+
+    const config = {
+      limit:       parseInt(document.getElementById('cfgLimit').value),
+      apiEndpoint: document.getElementById('cfgEndpoint').value.trim(),
+      apiSecret:   document.getElementById('cfgSecret').value.trim(),
+    };
+
+    try {
+      const res = await fetch('/api/start', {
+        method:  'POST',
+        headers: {'Content-Type':'application/json'},
+        body:    JSON.stringify(config),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        setRunningUI(true);
+        startElapsedTimer();
+        totalMessages = 0;
+        scrapedList   = [];
+        renderTable([]);
+      } else {
+        btn.classList.remove('loading');
+        alert('⚠️ ' + d.error);
+      }
+    } catch(e) {
+      btn.classList.remove('loading');
+      alert('❌ Không kết nối được server Flask! Hãy chạy server.py trước.');
+    }
+  }
+
+  async function stopScraper() {
+    try {
+      await fetch('/api/stop', { method: 'POST' });
+      setRunningUI(false);
+      stopElapsedTimer();
+    } catch(e) { alert('Lỗi khi dừng.'); }
+  }
+
+  /* ══════════════════════════════════════
+     INIT
+  ══════════════════════════════════════ */
+  connectSSE();
+  pollStatus();
+  pollTimer = setInterval(pollStatus, 2000);
+</script>
+</body>
+</html>

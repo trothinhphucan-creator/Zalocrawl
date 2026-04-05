@@ -42,9 +42,20 @@ def init_db():
                 scraped_at  TEXT,
                 status      TEXT    DEFAULT 'pending',
                 synced      INTEGER DEFAULT 0,
-                synced_at   TEXT
+                synced_at   TEXT,
+                zalo_uid    TEXT    DEFAULT NULL,
+                zalo_name   TEXT    DEFAULT NULL
             )
         """)
+        # Migration: thêm cột nếu đang dùng DB cũ chưa có zalo_uid
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN zalo_uid  TEXT DEFAULT NULL")
+        except Exception:
+            pass  # cột đã tồn tại
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN zalo_name TEXT DEFAULT NULL")
+        except Exception:
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sync_config (
                 key   TEXT PRIMARY KEY,
@@ -501,6 +512,158 @@ def api_sync():
         "failed":    len(synced_err),
         "syncedIds": synced_ok,
         "errors":    synced_err,
+    })
+
+
+
+# ──────────────────────────────────────────────
+#  ZCA-JS INTEGRATION ENDPOINTS
+# ──────────────────────────────────────────────
+
+@app.route("/api/zca/import-friends", methods=["POST"])
+def api_zca_import_friends():
+    """
+    Nhận friend list từ zca-js, match theo tên với conversations trong DB.
+    zca-js gọi:
+      const friends = await zca.getFriendList();
+      fetch('http://localhost:5000/api/zca/import-friends', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ friends: friends.data })
+      })
+    Friend object mẫu: { userId, zaloName, alias, ... }
+    """
+    body = request.get_json(silent=True) or {}
+    friends: list = body.get("friends", [])
+
+    if not friends:
+        return jsonify({"ok": False, "error": "friends list trống"}), 400
+
+    # Build lookup: cạnh thường hóa tên để match mềm
+    import unicodedata
+    def norm(s: str) -> str:
+        s = (s or "").lower().strip()
+        # Bỏ dấu tiếng Việt cho fuzzy match
+        nfkd = unicodedata.normalize('NFKD', s)
+        return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+    friend_map = {}  # norm_name -> {userId, zaloName}
+    for f in friends:
+        uid  = str(f.get("userId", "") or f.get("uid", "") or f.get("id", ""))
+        name = f.get("zaloName", "") or f.get("name", "") or f.get("alias", "")
+        if uid and name:
+            friend_map[norm(name)] = {"userId": uid, "zaloName": name}
+
+    # Match với tất cả conversations chưa có zalo_uid
+    matched = []
+    unmatched = []
+
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, customer FROM conversations WHERE zalo_uid IS NULL"
+        ).fetchall()
+
+        for row in rows:
+            key = norm(row["customer"])
+            if key in friend_map:
+                f_info = friend_map[key]
+                conn.execute(
+                    "UPDATE conversations SET zalo_uid=?, zalo_name=? WHERE id=?",
+                    (f_info["userId"], f_info["zaloName"], row["id"])
+                )
+                matched.append({
+                    "id": row["id"],
+                    "customer": row["customer"],
+                    "userId": f_info["userId"],
+                })
+            else:
+                unmatched.append(row["customer"])
+
+    STATE.push_log("SUCCESS",
+        f"[ZCA] Import {len(friends)} friends → matched {len(matched)}/{len(rows)} contacts")
+
+    return jsonify({
+        "ok":        True,
+        "total_friends": len(friends),
+        "matched":   len(matched),
+        "unmatched": len(unmatched),
+        "matchedContacts": matched,
+        "unmatchedNames":  unmatched[:20],  # giới hạn để tránh payload to
+    })
+
+
+@app.route("/api/zca/update-uid", methods=["POST"])
+def api_zca_update_uid():
+    """
+    Cập nhật zalo_uid thủ công cho 1 contact:
+    POST { id: 123, zalo_uid: "123456789", zalo_name: "Nguyễn Văn A" }
+    """
+    body = request.get_json(silent=True) or {}
+    conv_id  = body.get("id")
+    zalo_uid = str(body.get("zalo_uid", "")).strip()
+    zalo_name = body.get("zalo_name", "").strip()
+    if not conv_id or not zalo_uid:
+        return jsonify({"ok": False, "error": "Thiếu id hoặc zalo_uid"}), 400
+
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE conversations SET zalo_uid=?, zalo_name=? WHERE id=?",
+            (zalo_uid, zalo_name or None, conv_id)
+        )
+    return jsonify({"ok": True, "id": conv_id, "zalo_uid": zalo_uid})
+
+
+@app.route("/api/zca/remarketing-list")
+def api_zca_remarketing_list():
+    """
+    Trả về danh sách contacts đã approve + có zalo_uid để zca-js gửi tin.
+
+    zca-js gọi:
+      const res  = await fetch('http://localhost:5000/api/zca/remarketing-list');
+      const data = await res.json();
+      for (const c of data.contacts) {
+        await zca.sendMessage({ msg: data.template.replace('{name}', c.name) },
+                               Number(c.userId), ThreadType.User);
+      }
+    """
+    with _get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, customer, zalo_uid, zalo_name, msg_count, scraped_at
+            FROM conversations
+            WHERE status='approved' AND zalo_uid IS NOT NULL AND zalo_uid != ''
+            ORDER BY id DESC
+        """).fetchall()
+
+    contacts = [{
+        "id":        r["id"],
+        "name":      r["zalo_name"] or r["customer"],
+        "userId":    r["zalo_uid"],
+        "msgCount":  r["msg_count"],
+        "scrapedAt": r["scraped_at"],
+    } for r in rows]
+
+    return jsonify({
+        "ok":       True,
+        "total":    len(contacts),
+        "contacts": contacts,
+        # Template remarketing mẫu — zca-js thay {name} bằng tên thực
+        "template": "Chào {name}, cảm ơn bạn đã nhắn tin với chúng mình! 😊",
+    })
+
+
+@app.route("/api/zca/stats")
+def api_zca_stats():
+    """Thống kê nhanh trạng thái ZCA matching."""
+    with _get_db() as conn:
+        total    = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        matched  = conn.execute("SELECT COUNT(*) FROM conversations WHERE zalo_uid IS NOT NULL").fetchone()[0]
+        approved = conn.execute("SELECT COUNT(*) FROM conversations WHERE status='approved' AND zalo_uid IS NOT NULL").fetchone()[0]
+        ready    = approved  # sẵn sàng gửi remarketing
+
+    return jsonify({
+        "ok": True,
+        "total": total, "matched": matched,
+        "approved": approved, "readyToSend": ready,
     })
 
 

@@ -773,10 +773,21 @@
 
           <div class="form-group">
             <label class="form-label">Số người cần cào</label>
-            <div class="range-row">
-              <input type="range" id="cfgLimit" min="1" max="500" value="100"
-                     oninput="updateRange(this)" style="--pct:20%" />
-              <span class="range-val" id="cfgLimitVal">100</span>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <input type="number" id="cfgLimit" min="1" value="100"
+                     style="width:110px;background:var(--bg-input);border:1px solid var(--border);
+                            border-radius:8px;color:var(--text-primary);padding:7px 12px;
+                            font-family:var(--font-mono);font-size:14px;font-weight:600;
+                            outline:none;transition:border-color .2s"
+                     oninput="onLimitInput(this)"
+                     onfocus="this.style.borderColor='var(--accent)'"
+                     onblur="this.style.borderColor='var(--border)'" />
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;
+                             font-size:12px;color:var(--text-secondary);user-select:none">
+                <input type="checkbox" id="cfgUnlimited" onchange="toggleUnlimited(this)"
+                       style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+                Không giới hạn
+              </label>
             </div>
           </div>
 
@@ -1088,15 +1099,31 @@
   }
 
   /* ══════════════════════════════════════
-     RANGE SLIDER
+     LIMIT INPUT
   ══════════════════════════════════════ */
-  function updateRange(el) {
-    const pct = ((el.value - el.min) / (el.max - el.min) * 100).toFixed(1);
-    el.style.setProperty('--pct', pct + '%');
-    document.getElementById('cfgLimitVal').textContent = el.value;
-    scrapeLimit = parseInt(el.value);
+  function onLimitInput(el) {
+    const v = parseInt(el.value);
+    if (!isNaN(v) && v >= 1) {
+      scrapeLimit = v;
+      document.getElementById('cfgUnlimited').checked = false;
+    }
   }
-  updateRange(document.getElementById('cfgLimit'));
+  function toggleUnlimited(cb) {
+    const inp = document.getElementById('cfgLimit');
+    if (cb.checked) {
+      inp.value    = '';
+      inp.placeholder = '∞';
+      inp.disabled = true;
+      scrapeLimit  = 999999;
+    } else {
+      inp.placeholder = '';
+      inp.value    = 100;
+      inp.disabled = false;
+      scrapeLimit  = 100;
+    }
+  }
+  // init
+  scrapeLimit = parseInt(document.getElementById('cfgLimit').value) || 100;
 
   /* ══════════════════════════════════════
      LOG TERMINAL
@@ -1159,12 +1186,18 @@
      PROGRESS RING
   ══════════════════════════════════════ */
   function updateRing(scraped, limit) {
-    const pct = limit > 0 ? Math.min(scraped / limit, 1) : 0;
-    const circ = 2 * Math.PI * 40;       // r=40
-    const offset = circ * (1 - pct);
+    const unlimited = limit >= 999999;
+    const pct = (!unlimited && limit > 0) ? Math.min(scraped / limit, 1) : 0;
+    const circ = 2 * Math.PI * 40;
+    const offset = unlimited ? circ * 0.05   // tiny arc when unlimited
+                             : circ * (1 - pct);
     document.getElementById('ringFg').style.strokeDashoffset = offset;
-    document.getElementById('ringPct').textContent = Math.round(pct * 100) + '%';
-    document.getElementById('ringDetail').textContent = `${scraped} / ${limit} người`;
+    document.getElementById('ringPct').textContent = unlimited
+      ? scraped.toString()
+      : Math.round(pct * 100) + '%';
+    document.getElementById('ringDetail').textContent = unlimited
+      ? `${scraped} người / ∞`
+      : `${scraped} / ${limit} người`;
   }
 
   /* ══════════════════════════════════════
@@ -1298,11 +1331,13 @@
     const btn = document.getElementById('btnStart');
     btn.classList.add('loading');
 
+    const isUnlimited = document.getElementById('cfgUnlimited').checked;
     const config = {
-      limit:       parseInt(document.getElementById('cfgLimit').value),
+      limit:       isUnlimited ? 999999 : (parseInt(document.getElementById('cfgLimit').value) || 100),
       apiEndpoint: document.getElementById('cfgEndpoint').value.trim(),
       apiSecret:   document.getElementById('cfgSecret').value.trim(),
     };
+    scrapeLimit = config.limit;
 
     try {
       const res = await fetch('/api/start', {

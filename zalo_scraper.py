@@ -643,7 +643,8 @@ def main_scraper(limit: int = 100):
             scraped_names.add(dedup_key)   # đánh dấu theo positional key
             total_scraped += 1
             found_new_in_pass = True
-            log.info("[LOOP] Tiến độ: %d/%d người đã cào.", total_scraped, limit)
+            limit_str = "∞" if limit >= 999999 else str(limit)
+            log.info("[LOOP] Tiến độ: %d/%s người đã cào.", total_scraped, limit_str)
 
         # ── Cuộn sidebar ──────────────────────────────────────
         if not found_new_in_pass:

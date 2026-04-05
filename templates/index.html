@@ -520,9 +520,180 @@
       .left-col  { grid-row: auto; }
       .stats-grid { grid-template-columns: repeat(2, 1fr); }
     }
+        /* ══ TAB NAVIGATION ══ */
+    .tab-nav { display: flex; gap: 4px; }
+    .tab-btn {
+      padding: 7px 18px;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      cursor: pointer; border: 1px solid transparent;
+      color: var(--text-secondary);
+      background: none;
+      font-family: var(--font-sans);
+      transition: all .2s;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .tab-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+    .tab-btn.active {
+      background: rgba(99,179,237,0.12);
+      border-color: rgba(99,179,237,0.3);
+      color: var(--accent);
+    }
+    .tab-badge {
+      background: var(--accent);
+      color: #0a0e1a; font-size: 10px; font-weight: 700;
+      border-radius: 10px; padding: 1px 6px;
+      min-width: 18px; text-align: center;
+    }
+
+    /* ══ TAB PAGES ══ */
+    .tab-page { display: none; }
+    .tab-page.active { display: block; }
+
+    /* ══ REVIEW PAGE ══ */
+    .review-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px;
+      padding: 20px 32px 0;
+      max-width: 1440px; margin: 0 auto;
+    }
+    .filter-group { display: flex; gap: 6px; }
+    .filter-btn {
+      padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      border: 1px solid var(--border); background: none;
+      color: var(--text-secondary); cursor: pointer; font-family: var(--font-sans);
+      transition: all .2s;
+    }
+    .filter-btn:hover { border-color: var(--border-glow); color: var(--accent); }
+    .filter-btn.active {
+      background: rgba(99,179,237,0.15); border-color: var(--accent); color: var(--accent);
+    }
+    .filter-btn.f-approved.active { background: rgba(104,211,145,0.15); border-color: var(--success); color: var(--success); }
+    .filter-btn.f-rejected.active { background: rgba(252,129,129,0.15); border-color: var(--danger); color: var(--danger); }
+
+    .sync-toolbar { display: flex; gap: 8px; align-items: center; }
+    .btn-sm {
+      padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: none; font-family: var(--font-sans);
+      display: flex; align-items: center; gap: 7px; transition: all .2s;
+    }
+    .btn-sync {
+      background: linear-gradient(135deg, #9f7aea, #667eea);
+      color: #fff; box-shadow: 0 4px 14px rgba(159,122,234,0.35);
+    }
+    .btn-sync:hover { box-shadow: 0 6px 20px rgba(159,122,234,0.5); }
+    .btn-sync:disabled { opacity:.45; cursor:not-allowed; }
+    .btn-cfg {
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+    .btn-cfg:hover { border-color: var(--border-glow); color: var(--text-primary); }
+
+    .review-grid {
+      padding: 16px 32px 32px;
+      max-width: 1440px; margin: 0 auto;
+    }
+    .review-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); overflow: hidden;
+    }
+    .review-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    .review-table th {
+      padding: 11px 16px; font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted);
+      border-bottom: 1px solid var(--border); text-align: left;
+    }
+    .review-table td { padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+    .review-table tr:last-child td { border-bottom: none; }
+    .review-table tr:hover td { background: rgba(255,255,255,0.025); }
+    .status-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    }
+    .chip-pending  { background: rgba(246,173,85,0.12);  color: var(--warning); }
+    .chip-approved { background: rgba(104,211,145,0.12); color: var(--success); }
+    .chip-rejected { background: rgba(252,129,129,0.12); color: var(--danger); }
+    .chip-synced   { background: rgba(99,179,237,0.12);  color: var(--accent); }
+    .action-btns { display: flex; gap: 5px; }
+    .ico-btn {
+      width: 30px; height: 30px; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border); background: none;
+      color: var(--text-secondary); cursor: pointer; font-size: 13px;
+      transition: all .2s;
+    }
+    .ico-btn:hover.view    { border-color: var(--accent);   color: var(--accent); background: rgba(99,179,237,0.1); }
+    .ico-btn:hover.approve { border-color: var(--success);  color: var(--success); background: rgba(104,211,145,0.1); }
+    .ico-btn:hover.reject  { border-color: var(--warning);  color: var(--warning); background: rgba(246,173,85,0.1); }
+    .ico-btn:hover.del     { border-color: var(--danger);   color: var(--danger); background: rgba(252,129,129,0.1); }
+    .ico-btn:hover.sync-one{ border-color: var(--accent-2); color: var(--accent-2); background: rgba(159,122,234,0.1); }
+
+    /* ══ MODAL ══ */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 999;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(6px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      opacity: 0; pointer-events: none; transition: opacity .25s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal {
+      background: #0d1525; border: 1px solid var(--border);
+      border-radius: var(--radius-lg); width: 100%; max-width: 640px;
+      max-height: 90vh; display: flex; flex-direction: column;
+      transform: translateY(20px); transition: transform .25s;
+    }
+    .modal-overlay.open .modal { transform: translateY(0); }
+    .modal-header {
+      padding: 20px 24px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .modal-title { font-size: 15px; font-weight: 700; }
+    .modal-close {
+      width: 30px; height: 30px; border-radius: 8px;
+      border: 1px solid var(--border); background: none;
+      color: var(--text-muted); cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .2s;
+    }
+    .modal-close:hover { color: var(--danger); border-color: var(--danger); }
+    .modal-body { flex: 1; overflow-y: auto; padding: 20px 24px; }
+    .chat-bubble-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .bubble-row { display: flex; gap: 10px; }
+    .bubble-row.me { flex-direction: row-reverse; }
+    .bubble-avatar {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
+    }
+    .bubble {
+      max-width: 72%; padding: 9px 13px; border-radius: 14px;
+      font-size: 13px; line-height: 1.5;
+    }
+    .bubble-row:not(.me) .bubble {
+      background: rgba(255,255,255,0.06); color: var(--text-primary);
+      border-top-left-radius: 4px;
+    }
+    .bubble-row.me .bubble {
+      background: rgba(99,179,237,0.15); color: var(--accent);
+      border-top-right-radius: 4px;
+    }
+    .bubble-sender { font-size: 10px; color: var(--text-muted); margin-bottom: 3px; }
+
+    /* ══ SYNC CONFIG MODAL ══ */
+    .cfg-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+    .cfg-label { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+
+    @media (max-width: 1100px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .left-col  { grid-row: auto; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .review-toolbar, .review-grid { padding-left: 16px; padding-right: 16px; }
+    }
     @media (max-width: 640px) {
       .main-grid { padding: 16px; gap: 16px; }
-      .topbar    { padding: 14px 16px; }
+      .topbar    { padding: 14px 16px; flex-wrap: wrap; gap: 10px; }
       .stats-grid { grid-template-columns: 1fr 1fr; }
     }
   </style>
@@ -536,8 +707,18 @@
       <div class="brand-icon">🤖</div>
       <div>
         <div class="brand-name">Zalo Scraper</div>
-        <div class="brand-sub">RPA Dashboard — Antigravity v1.0</div>
+        <div class="brand-sub">RPA Dashboard — Antigravity v2.0</div>
       </div>
+    </div>
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+      <button class="tab-btn active" id="tabBtnScraper" onclick="switchTab('scraper')">
+        <i class="fa-solid fa-robot"></i> Scraper
+      </button>
+      <button class="tab-btn" id="tabBtnReview" onclick="switchTab('review')">
+        <i class="fa-solid fa-list-check"></i> Duyệt hội thoại
+        <span class="tab-badge" id="reviewBadge" style="display:none">0</span>
+      </button>
     </div>
     <div class="topbar-right">
       <div class="status-pill idle" id="statusPill">
@@ -546,6 +727,9 @@
       </div>
     </div>
   </header>
+
+  <!-- ── TAB 1: SCRAPER ── -->
+  <div class="tab-page active" id="tabScraper">
 
   <!-- ── MAIN ── -->
   <main class="main-grid">
@@ -726,20 +910,142 @@
 
     </div><!-- /right col -->
   </main>
+  </div><!-- /tabScraper -->
+
+  <!-- ══════════════════════════════════════════
+       TAB 2: DUYỆT HỘI THOẠI
+  ══════════════════════════════════════════ -->
+  <div class="tab-page" id="tabReview">
+    <!-- Toolbar -->
+    <div class="review-toolbar">
+      <div class="filter-group">
+        <button class="filter-btn active" onclick="filterConvs('all')">
+          Tất cả <span id="cntAll">0</span>
+        </button>
+        <button class="filter-btn f-pending" onclick="filterConvs('pending')">
+          ⏳ Chờ <span id="cntPending">0</span>
+        </button>
+        <button class="filter-btn f-approved" onclick="filterConvs('approved')">
+          ✅ Đã duyệt <span id="cntApproved">0</span>
+        </button>
+        <button class="filter-btn f-rejected" onclick="filterConvs('rejected')">
+          ❌ Từ chối <span id="cntRejected">0</span>
+        </button>
+      </div>
+      <div class="sync-toolbar">
+        <span style="font-size:12px;color:var(--text-muted)" id="syncStatus"></span>
+        <button class="btn-sm btn-cfg" onclick="openSyncCfg()">
+          <i class="fa-solid fa-gear"></i> Cài đặt Sync
+        </button>
+        <button class="btn-sm btn-sync" id="btnSync" onclick="syncToAgentSee()">
+          <i class="fa-solid fa-cloud-arrow-up"></i> Sync AgentSee
+        </button>
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="review-grid">
+      <div class="review-card">
+        <table class="review-table">
+          <thead>
+            <tr>
+              <th style="width:50px">#</th>
+              <th>Khách hàng</th>
+              <th style="width:70px">Msgs</th>
+              <th style="width:150px">Thời gian</th>
+              <th style="width:120px">Trạng thái</th>
+              <th style="width:180px">Hành động</th>
+            </tr>
+          </thead>
+          <tbody id="reviewTableBody">
+            <tr><td colspan="6">
+              <div class="empty-state">
+                <i class="fa-regular fa-folder-open"></i>
+                Chưa có dữ liệu. Chạy scraper để thu thập.
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /tabReview -->
+
+</div><!-- /app-wrapper -->
+
+<!-- ══ MODAL: Xem hội thoại ══ -->
+<div class="modal-overlay" id="chatModal" onclick="closeChatModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modalTitle">Hội thoại</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:3px" id="modalSub"></div>
+      </div>
+      <button class="modal-close" onclick="closeChatModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="chat-bubble-wrap" id="chatBubbles"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: Sync Config ══ -->
+<div class="modal-overlay" id="syncCfgModal" onclick="closeSyncCfg(event)">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <div class="modal-title"><i class="fa-solid fa-gear"></i> Cấu hình Sync AgentSee</div>
+      <button class="modal-close" onclick="closeSyncCfg()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="cfg-row">
+        <label class="cfg-label">AgentSee API URL</label>
+        <input class="form-input form-input-mono" id="cfgSyncUrl"
+               placeholder="https://your-server/api/import-chat" />
+      </div>
+      <div class="cfg-row">
+        <label class="cfg-label">Secret Key</label>
+        <input class="form-input" id="cfgSyncSecret"
+               type="password" placeholder="secret_key" />
+      </div>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <button class="btn-sm btn-sync" style="flex:1" onclick="saveSyncCfg()">
+          <i class="fa-solid fa-floppy-disk"></i> Lưu
+        </button>
+        <button class="btn-sm btn-cfg" style="flex:1" onclick="closeSyncCfg()">
+          Đóng
+        </button>
+      </div>
+      <div id="cfgSyncFeedback" style="margin-top:12px;font-size:13px;color:var(--text-secondary)"></div>
+    </div>
+  </div>
 </div>
 
 <script>
   /* ══════════════════════════════════════
      STATE
   ══════════════════════════════════════ */
-  let autoScroll = true;
-  let isRunning  = false;
-  let sseSource  = null;
-  let pollTimer  = null;
-  let elapsedTimer = null;
+  let autoScroll  = true;
+  let isRunning   = false;
+  let sseSource   = null;
+  let pollTimer   = null;
+  let elapsedTimer  = null;
   let totalMessages = 0;
-  let scrapedList = [];
-  let scrapeLimit = 100;
+  let scrapedList   = [];
+  let scrapeLimit   = 100;
+  let convData      = [];        // conversation list from SQLite
+  let convFilter    = 'all';     // current filter
+  let currentTab    = 'scraper';
+
+  /* ══════════════════════════════════════
+     TAB SWITCHING
+  ══════════════════════════════════════ */
+  function switchTab(tab) {
+    currentTab = tab;
+    document.getElementById('tabBtnScraper').classList.toggle('active', tab === 'scraper');
+    document.getElementById('tabBtnReview').classList.toggle('active', tab === 'review');
+    document.getElementById('tabScraper').classList.toggle('active', tab === 'scraper');
+    document.getElementById('tabReview').classList.toggle('active', tab === 'review');
+    if (tab === 'review') loadConversations();
+  }
 
   /* ══════════════════════════════════════
      RANGE SLIDER
@@ -921,10 +1227,13 @@
         if (!d.isRunning) stopElapsedTimer();
       }
 
-      if (d.scrapedList && d.scrapedList.length) {
-        scrapedList = d.scrapedList;
-        renderTable(scrapedList);
-      }
+      // Luôn render table — kể cả khi rỗng (reset giữa session)
+      scrapedList = d.scrapedList || [];
+      renderTable(scrapedList);
+
+      // Tổng tin nhắn = tổng logs của tất cả contacts đã push thành công
+      const msgTotal = scrapedList.reduce((s, c) => s + (c.logs || 0), 0);
+      animateStat('statMessages', msgTotal);
     } catch(e) { /* server maybe down */ }
   }
 
@@ -992,6 +1301,220 @@
   connectSSE();
   pollStatus();
   pollTimer = setInterval(pollStatus, 2000);
+  loadSyncConfig();
+
+  /* ══════════════════════════════════════
+     REVIEW TAB — CONVERSATIONS
+  ══════════════════════════════════════ */
+  async function loadConversations() {
+    try {
+      const res = await fetch(`/api/conversations?status=${convFilter}`);
+      const d   = await res.json();
+      convData  = d.data || [];
+      renderReviewTable(convData);
+      updateCounts();
+    } catch(e) {
+      console.error('Load conversations failed', e);
+    }
+  }
+
+  async function updateCounts() {
+    try {
+      const res = await fetch('/api/conversations?status=all&limit=999');
+      const d   = await res.json();
+      const all = d.data || [];
+      const cnt = s => all.filter(c => c.status === s).length;
+      document.getElementById('cntAll').textContent      = all.length;
+      document.getElementById('cntPending').textContent  = cnt('pending');
+      document.getElementById('cntApproved').textContent = cnt('approved');
+      document.getElementById('cntRejected').textContent = cnt('rejected');
+      // Badge on tab button
+      const pending = cnt('pending');
+      const badge   = document.getElementById('reviewBadge');
+      badge.textContent = pending;
+      badge.style.display = pending > 0 ? 'inline-block' : 'none';
+    } catch(_) {}
+  }
+
+  function filterConvs(status) {
+    convFilter = status;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    const map = { all: 0, pending: 1, approved: 2, rejected: 3 };
+    document.querySelectorAll('.filter-btn')[map[status]]?.classList.add('active');
+    loadConversations();
+  }
+
+  function renderReviewTable(list) {
+    const tbody = document.getElementById('reviewTableBody');
+    if (!list || !list.length) {
+      tbody.innerHTML = `<tr><td colspan="6">
+        <div class="empty-state">
+          <i class="fa-regular fa-folder-open"></i>
+          Không có hội thoại nào${convFilter !== 'all' ? ' với trạng thái này' : ''}.
+        </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map((c, i) => {
+      const init   = (c.customer||'?').charAt(0).toUpperCase();
+      const status = c.status || 'pending';
+      const synced = c.synced === 1;
+      const chipCls = synced ? 'chip-synced' : `chip-${status}`;
+      const chipTxt = synced ? '☁️ Synced' : { pending:'⏳ Chờ', approved:'✅ Duyệt', rejected:'❌ Từ chối' }[status] || status;
+      const scrapedAt = c.scraped_at ? c.scraped_at.replace('T',' ').substring(0,16) : '—';
+      return `<tr>
+        <td style="color:var(--text-muted)">${i+1}</td>
+        <td>
+          <div class="name-cell">
+            <div class="avatar">${init}</div>${escapeHtml(c.customer||'—')}
+          </div>
+        </td>
+        <td>${c.msg_count || 0}</td>
+        <td style="font-family:var(--font-mono);font-size:12px">${escapeHtml(scrapedAt)}</td>
+        <td><span class="status-chip ${chipCls}">${chipTxt}</span></td>
+        <td>
+          <div class="action-btns">
+            <button class="ico-btn view"    title="Xem"      onclick="openChatModal(${c.id})"><i class="fa-solid fa-eye"></i></button>
+            <button class="ico-btn approve" title="Duyệt"    onclick="setConvStatus(${c.id},'approved')" ${status==='approved'?'disabled':''}><i class="fa-solid fa-check"></i></button>
+            <button class="ico-btn reject"  title="Từ chối"  onclick="setConvStatus(${c.id},'rejected')" ${status==='rejected'?'disabled':''}><i class="fa-solid fa-xmark"></i></button>
+            <button class="ico-btn sync-one" title="Sync ngay" onclick="syncOne(${c.id})" ${synced?'disabled':''}><i class="fa-solid fa-upload"></i></button>
+            <button class="ico-btn del"     title="Xóa"      onclick="deleteConv(${c.id})"><i class="fa-solid fa-trash"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  async function setConvStatus(id, status) {
+    await fetch(`/api/conversations/${id}/status`, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({status}),
+    });
+    loadConversations();
+  }
+
+  async function deleteConv(id) {
+    if (!confirm('Xóa hội thoại này?')) return;
+    await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+    loadConversations();
+  }
+
+  async function openChatModal(id) {
+    const conv = convData.find(c => c.id === id);
+    if (!conv) return;
+    document.getElementById('modalTitle').textContent = conv.customer || 'Hội thoại';
+    document.getElementById('modalSub').textContent   = `${conv.msg_count || 0} tin nhắn • ${(conv.scraped_at||'').substring(0,16)}`;
+    let logs = [];
+    try { logs = JSON.parse(conv.logs || '[]'); } catch(_) {}
+    const bubbles = document.getElementById('chatBubbles');
+    if (!logs.length) {
+      bubbles.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center">Không có tin nhắn nào được ghi lại.</div>';
+    } else {
+      const OWNER = logs[0]?.sender || '';
+      bubbles.innerHTML = logs.map(m => {
+        const isMe = m.sender !== OWNER;
+        return `<div class="bubble-row ${isMe?'me':''}">
+          <div class="bubble-avatar">${(m.sender||'?').charAt(0)}</div>
+          <div>
+            <div class="bubble-sender">${escapeHtml(m.sender||'')}</div>
+            <div class="bubble">${escapeHtml(m.message||'')}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    document.getElementById('chatModal').classList.add('open');
+  }
+
+  function closeChatModal(e) {
+    if (e && e.target !== document.getElementById('chatModal')) return;
+    document.getElementById('chatModal').classList.remove('open');
+  }
+
+  /* ══════════════════════════════════════
+     SYNC TO AGENTSEE
+  ══════════════════════════════════════ */
+  async function syncToAgentSee() {
+    const btn = document.getElementById('btnSync');
+    btn.disabled = true;
+    document.getElementById('syncStatus').textContent = '⏳ Đang sync…';
+    try {
+      const res = await fetch('/api/sync', { method: 'POST' });
+      const d   = await res.json();
+      if (d.ok) {
+        const msg = d.synced > 0
+          ? `✅ Sync ${d.synced} hội thoại thành công!`
+          : d.message || '⚠️ Không có gì để sync.';
+        document.getElementById('syncStatus').textContent = msg;
+        loadConversations();
+      } else {
+        document.getElementById('syncStatus').textContent = '❌ ' + (d.error || 'Lỗi sync');
+        if (d.error && d.error.includes('URL')) openSyncCfg();
+      }
+    } catch(e) {
+      document.getElementById('syncStatus').textContent = '❌ Lỗi kết nối server';
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => document.getElementById('syncStatus').textContent = '', 5000);
+    }
+  }
+
+  async function syncOne(id) {
+    const res = await fetch('/api/sync', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids: [id]}),
+    });
+    const d = await res.json();
+    document.getElementById('syncStatus').textContent =
+      d.synced > 0 ? '✅ Đã sync!' : '❌ ' + (d.error || 'Lỗi');
+    loadConversations();
+    setTimeout(() => document.getElementById('syncStatus').textContent = '', 3000);
+  }
+
+  /* ══════════════════════════════════════
+     SYNC CONFIG MODAL
+  ══════════════════════════════════════ */
+  async function loadSyncConfig() {
+    try {
+      const res = await fetch('/api/sync/config');
+      const d   = await res.json();
+      const cfg = d.config || {};
+      document.getElementById('cfgSyncUrl').value    = cfg.agentsee_url    || '';
+      document.getElementById('cfgSyncSecret').value = cfg.agentsee_secret || '';
+    } catch(_) {}
+  }
+
+  function openSyncCfg() {
+    loadSyncConfig();
+    document.getElementById('syncCfgModal').classList.add('open');
+  }
+
+  function closeSyncCfg(e) {
+    if (e && e.target !== document.getElementById('syncCfgModal')) return;
+    document.getElementById('syncCfgModal').classList.remove('open');
+    document.getElementById('cfgSyncFeedback').textContent = '';
+  }
+
+  async function saveSyncCfg() {
+    const url    = document.getElementById('cfgSyncUrl').value.trim();
+    const secret = document.getElementById('cfgSyncSecret').value.trim();
+    const fb     = document.getElementById('cfgSyncFeedback');
+    if (!url) { fb.textContent = '⚠️ Vui lòng nhập URL'; return; }
+    fb.textContent = '⏳ Đang lưu…';
+    try {
+      await fetch('/api/sync/config', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ agentsee_url: url, agentsee_secret: secret }),
+      });
+      fb.style.color = 'var(--success)';
+      fb.textContent = '✅ Đã lưu! Bạn có thể sync ngay bây giờ.';
+      setTimeout(() => document.getElementById('syncCfgModal').classList.remove('open'), 1500);
+    } catch(e) {
+      fb.style.color = 'var(--danger)';
+      fb.textContent = '❌ Lỗi lưu config';
+    }
+  }
 </script>
 </body>
 </html>

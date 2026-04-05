@@ -1,6 +1,6 @@
 """
-Flask Backend — Zalo Scraper Dashboard
-Cung cấp REST API + Server-Sent Events (SSE) cho giao diện web.
+Flask Backend — Zalo Scraper Dashboard v2
+Thêm: SQLite local storage, Review/Filter API, Sync to AgentSee CRM
 """
 
 from flask import Flask, jsonify, request, Response, send_from_directory
@@ -10,33 +10,135 @@ import queue
 import time
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import sys
 import logging
+import requests as http_requests
 from datetime import datetime
 from collections import deque
+from contextlib import contextmanager
 
 # ──────────────────────────────────────────────
 app = Flask(__name__, static_folder="static", template_folder="templates")
 CORS(app)
 
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zalocrawl.db")
+
+# ──────────────────────────────────────────────
+#  DATABASE — SQLite
+# ──────────────────────────────────────────────
+
+def init_db():
+    """Tạo bảng SQLite nếu chưa có."""
+    with _get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversations (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer    TEXT    NOT NULL,
+                logs        TEXT    NOT NULL DEFAULT '[]',
+                msg_count   INTEGER DEFAULT 0,
+                scraped_at  TEXT,
+                status      TEXT    DEFAULT 'pending',
+                synced      INTEGER DEFAULT 0,
+                synced_at   TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sync_config (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        # Mặc định sync config
+        conn.execute("""
+            INSERT OR IGNORE INTO sync_config (key, value) VALUES
+                ('agentsee_url',    'http://your-agentsee-server/api/import-chat'),
+                ('agentsee_secret', ''),
+                ('agentsee_method', 'POST')
+        """)
+
+
+@contextmanager
+def _get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_save_conversation(customer: str, logs: list) -> int:
+    """Lưu conversation mới vào DB. Trả về ID."""
+    with _get_db() as conn:
+        cur = conn.execute(
+            """INSERT INTO conversations (customer, logs, msg_count, scraped_at, status, synced)
+               VALUES (?, ?, ?, ?, 'pending', 0)""",
+            (customer, json.dumps(logs, ensure_ascii=False),
+             len(logs), datetime.now().isoformat())
+        )
+        return cur.lastrowid
+
+
+def db_get_conversations(status: str = "all", limit: int = 200) -> list:
+    with _get_db() as conn:
+        if status == "all":
+            rows = conn.execute(
+                "SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE status=? ORDER BY id DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def db_set_status(conv_id: int, status: str):
+    with _get_db() as conn:
+        conn.execute(
+            "UPDATE conversations SET status=? WHERE id=?", (status, conv_id)
+        )
+
+
+def db_delete(conv_id: int):
+    with _get_db() as conn:
+        conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
+
+
+def db_get_sync_config() -> dict:
+    with _get_db() as conn:
+        rows = conn.execute("SELECT key, value FROM sync_config").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+def db_set_sync_config(cfg: dict):
+    with _get_db() as conn:
+        for k, v in cfg.items():
+            conn.execute(
+                "INSERT OR REPLACE INTO sync_config (key, value) VALUES (?,?)", (k, v)
+            )
+
+
 # ──────────────────────────────────────────────
 #  TRẠNG THÁI TOÀN CỤC
 # ──────────────────────────────────────────────
 class ScraperState:
-    """Quản lý trạng thái của scraper process."""
     def __init__(self):
-        self.is_running   = False
-        self.process      = None          # subprocess.Popen
-        self.thread       = None          # thread đọc stdout
-        self.start_time   = None
+        self.is_running    = False
+        self.process       = None
+        self.thread        = None
+        self.start_time    = None
         self.total_scraped = 0
         self.total_pushed  = 0
         self.total_failed  = 0
         self.current_name  = ""
-        self.scraped_list  = []           # [{name, logs, time}]
+        self.scraped_list  = []
         self.log_queue     = queue.Queue()
-        self.log_history   = deque(maxlen=500)  # giữ 500 dòng log gần nhất
+        self.log_history   = deque(maxlen=500)
 
     def reset_stats(self):
         self.total_scraped = 0
@@ -49,17 +151,15 @@ class ScraperState:
     def push_log(self, level: str, message: str):
         entry = {
             "time":    datetime.now().strftime("%H:%M:%S"),
-            "level":   level,      # INFO | WARNING | ERROR | SUCCESS
+            "level":   level,
             "message": message,
         }
         self.log_history.append(entry)
         self.log_queue.put(entry)
 
     def elapsed(self) -> str:
-        if not self.start_time:
-            return "—"
-        start = datetime.fromisoformat(self.start_time)
-        delta = datetime.now() - start
+        if not self.start_time: return "—"
+        delta = datetime.now() - datetime.fromisoformat(self.start_time)
         h, rem = divmod(int(delta.total_seconds()), 3600)
         m, s   = divmod(rem, 60)
         return f"{h:02d}:{m:02d}:{s:02d}"
@@ -68,10 +168,71 @@ class ScraperState:
 STATE = ScraperState()
 
 # ──────────────────────────────────────────────
-#  SCRAPER RUNNER (subprocess)
+#  SCRAPER SUBPROCESS
 # ──────────────────────────────────────────────
+_pending: dict = {"name": "", "logs": 0, "log_data": []}
+
+
+def _parse_log_line(line: str):
+    global _pending
+
+    if "tiến độ" in line.lower() or "đã cào" in line.lower():
+        m = re.search(r"(\d+)/\d+ người", line)
+        if m:
+            STATE.total_scraped = int(m.group(1))
+
+    for pat in [r"Contact: '(.+?)'", r"Click vào: '(.+?)'"]:
+        m = re.search(pat, line)
+        if m:
+            name = m.group(1).strip()
+            _pending = {"name": name, "logs": 0, "log_data": []}
+            STATE.current_name = name
+            break
+
+    m = re.search(r"Parse được (\d+) tin nhắn", line)
+    if m:
+        _pending["logs"] = int(m.group(1))
+
+    if "✅ Thành công" in line and "[PUSH]" in line:
+        STATE.total_pushed += 1
+        name = _pending["name"] or STATE.current_name or "Unknown"
+        entry = {
+            "name":   name,
+            "logs":   _pending["logs"],
+            "status": "ok",
+            "time":   datetime.now().strftime("%H:%M:%S"),
+        }
+        STATE.scraped_list.append(entry)
+
+        # ── Lưu vào SQLite ──
+        try:
+            conv_id = db_save_conversation(name, _pending.get("log_data", []))
+            STATE.push_log("INFO", f"[DB] Đã lưu ID={conv_id} — '{name}'")
+        except Exception as e:
+            STATE.push_log("WARNING", f"[DB] Lỗi lưu: {e}")
+
+        _pending = {"name": "", "logs": 0, "log_data": []}
+
+    if "❌" in line and "[PUSH]" in line:
+        STATE.total_failed += 1
+        name = _pending["name"] or STATE.current_name or "Unknown"
+        STATE.scraped_list.append({
+            "name":   name,
+            "logs":   _pending["logs"],
+            "status": "error",
+            "time":   datetime.now().strftime("%H:%M:%S"),
+        })
+
+        # Lưu vào DB dù push lỗi (status=pending để retry)
+        try:
+            db_save_conversation(name, _pending.get("log_data", []))
+        except Exception:
+            pass
+
+        _pending = {"name": "", "logs": 0, "log_data": []}
+
+
 def _run_scraper_process(config: dict):
-    """Chạy zalo_scraper.py như subprocess và đọc log từ stdout."""
     limit   = config.get("limit", 100)
     api_url = config.get("apiEndpoint", "http://localhost:3000/api/crm/import-chats")
     secret  = config.get("apiSecret",   "antigravity_secret_2026")
@@ -81,40 +242,32 @@ def _run_scraper_process(config: dict):
     STATE.push_log("INFO", f"🚀 Bắt đầu scraper — limit={limit}")
     STATE.push_log("INFO", f"📡 API: {api_url}")
 
-    # Viết file config tạm thời để scraper đọc
     _write_runtime_config(limit, api_url, secret)
 
     try:
-        # Ép Python subprocess xuất ra UTF-8 (tránh lỗi cp1252 trên Windows)
         sub_env = {
             **os.environ,
-            "PYTHONIOENCODING": "utf-8",        # stdout/stderr của child process
-            "PYTHONUTF8":       "1",              # Python 3.7+ UTF-8 mode
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8":       "1",
             "SCRAPER_LIMIT":    str(limit),
             "SCRAPER_API_URL":  api_url,
             "SCRAPER_SECRET":   secret,
         }
         proc = subprocess.Popen(
-            [sys.executable, "-u", "zalo_scraper.py"],  # -u = unbuffered
+            [sys.executable, "-u", "zalo_scraper.py"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=False,          # đọc bytes thô, decode thủ công bên dưới
-            bufsize=0,
+            text=False, bufsize=0,
             cwd=os.path.dirname(os.path.abspath(__file__)),
             env=sub_env,
         )
         STATE.process = proc
 
-        # Đọc từng dòng bytes → decode UTF-8, bỏ qua byte lỗi
         for raw_line in proc.stdout:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
-
-            # Phân tích dòng log để cập nhật stats
             _parse_log_line(line)
-
-            # Xác định level để highlight
             level = "INFO"
             if "ERROR" in line or "❌" in line:
                 level = "ERROR"
@@ -122,7 +275,6 @@ def _run_scraper_process(config: dict):
                 level = "WARNING"
             elif "✅" in line or "Thành công" in line or "HOÀN TẤT" in line:
                 level = "SUCCESS"
-
             STATE.push_log(level, line)
 
         proc.wait()
@@ -135,38 +287,19 @@ def _run_scraper_process(config: dict):
     except Exception as e:
         STATE.push_log("ERROR", f"❌ Lỗi nghiêm trọng: {e}")
     finally:
-        STATE.is_running  = False
-        STATE.process     = None
+        STATE.is_running = False
+        STATE.process    = None
         STATE.push_log("SUCCESS", "✅ Scraper đã dừng.")
 
 
 def _write_runtime_config(limit, api_url, secret):
-    """Ghi config ra file runtime_config.json để scraper đọc nếu cần."""
     cfg = {"limit": limit, "api_endpoint": api_url, "api_secret": secret}
     with open("runtime_config.json", "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
-def _parse_log_line(line: str):
-    """Phân tích log line để cập nhật stats của STATE."""
-    if "đã cào" in line.lower() or "tiến độ" in line.lower():
-        import re
-        m = re.search(r"(\d+)/\d+ người", line)
-        if m:
-            STATE.total_scraped = int(m.group(1))
-    if "Click vào:" in line:
-        import re
-        m = re.search(r"Click vào: '(.+?)'", line)
-        if m:
-            STATE.current_name = m.group(1)
-    if "✅ Thành công" in line:
-        STATE.total_pushed += 1
-    if "❌" in line and "[PUSH]" in line:
-        STATE.total_failed += 1
-
-
 # ──────────────────────────────────────────────
-#  REST API ENDPOINTS
+#  REST API ENDPOINTS — Dashboard
 # ──────────────────────────────────────────────
 
 @app.route("/")
@@ -184,7 +317,7 @@ def api_status():
         "totalPushed":  STATE.total_pushed,
         "totalFailed":  STATE.total_failed,
         "currentName":  STATE.current_name,
-        "scrapedList":  STATE.scraped_list[-50:],  # trả 50 gần nhất
+        "scrapedList":  STATE.scraped_list[-50:],
     })
 
 
@@ -192,14 +325,11 @@ def api_status():
 def api_start():
     if STATE.is_running:
         return jsonify({"ok": False, "error": "Scraper đang chạy rồi!"}), 400
-
     config = request.get_json(silent=True) or {}
     STATE.log_history.clear()
-
     t = threading.Thread(target=_run_scraper_process, args=(config,), daemon=True)
     STATE.thread = t
     t.start()
-
     return jsonify({"ok": True, "message": "Scraper đã được khởi động."})
 
 
@@ -207,11 +337,9 @@ def api_start():
 def api_stop():
     if not STATE.is_running:
         return jsonify({"ok": False, "error": "Scraper không đang chạy."}), 400
-
     if STATE.process:
         STATE.process.terminate()
         STATE.push_log("WARNING", "⛔ Người dùng yêu cầu dừng scraper.")
-
     return jsonify({"ok": True, "message": "Đã gửi lệnh dừng."})
 
 
@@ -222,35 +350,166 @@ def api_logs_history():
 
 @app.route("/api/logs/stream")
 def api_logs_stream():
-    """Server-Sent Events — đẩy log real-time về client."""
     def event_stream():
-        # Gửi backlog trước
         for entry in list(STATE.log_history)[-50:]:
             yield f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
-
         while True:
             try:
                 entry = STATE.log_queue.get(timeout=1.0)
                 yield f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
             except queue.Empty:
-                # Heartbeat mỗi giây để giữ kết nối SSE
                 yield ": heartbeat\n\n"
 
     return Response(
         event_stream(),
         mimetype="text/event-stream",
-        headers={
-            "Cache-Control":               "no-cache",
-            "X-Accel-Buffering":           "no",
-            "Access-Control-Allow-Origin": "*",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                 "Access-Control-Allow-Origin": "*"},
     )
 
 
 # ──────────────────────────────────────────────
+#  REST API ENDPOINTS — Conversations (SQLite)
+# ──────────────────────────────────────────────
+
+@app.route("/api/conversations")
+def api_conversations():
+    status = request.args.get("status", "all")
+    rows = db_get_conversations(status=status, limit=300)
+    # Parse logs JSON string → list
+    for r in rows:
+        try:
+            r["logs_parsed"] = json.loads(r["logs"])
+        except Exception:
+            r["logs_parsed"] = []
+    return jsonify({"ok": True, "data": rows, "total": len(rows)})
+
+
+@app.route("/api/conversations/<int:conv_id>/status", methods=["PUT"])
+def api_set_status(conv_id):
+    body   = request.get_json(silent=True) or {}
+    status = body.get("status", "")
+    if status not in ("pending", "approved", "rejected"):
+        return jsonify({"ok": False, "error": "Status không hợp lệ"}), 400
+    db_set_status(conv_id, status)
+    return jsonify({"ok": True, "id": conv_id, "status": status})
+
+
+@app.route("/api/conversations/<int:conv_id>", methods=["DELETE"])
+def api_delete_conversation(conv_id):
+    db_delete(conv_id)
+    return jsonify({"ok": True, "deleted": conv_id})
+
+
+# ──────────────────────────────────────────────
+#  SYNC CONFIG
+# ──────────────────────────────────────────────
+
+@app.route("/api/sync/config", methods=["GET"])
+def api_get_sync_config():
+    return jsonify({"ok": True, "config": db_get_sync_config()})
+
+
+@app.route("/api/sync/config", methods=["POST"])
+def api_set_sync_config():
+    cfg = request.get_json(silent=True) or {}
+    allowed = {"agentsee_url", "agentsee_secret", "agentsee_method"}
+    filtered = {k: v for k, v in cfg.items() if k in allowed}
+    db_set_sync_config(filtered)
+    return jsonify({"ok": True, "saved": filtered})
+
+
+# ──────────────────────────────────────────────
+#  SYNC TO AGENTSEE CRM
+# ──────────────────────────────────────────────
+
+@app.route("/api/sync", methods=["POST"])
+def api_sync():
+    """
+    Đẩy các conversation approved + chưa sync lên AgentSee CRM.
+    Gọi: POST /api/sync
+    Body (optional): { "ids": [1, 2, 3] }  — sync ID cụ thể
+    """
+    cfg = db_get_sync_config()
+    url    = cfg.get("agentsee_url", "").strip()
+    secret = cfg.get("agentsee_secret", "").strip()
+
+    if not url or url == "http://your-agentsee-server/api/import-chat":
+        return jsonify({
+            "ok": False,
+            "error": "Chưa cấu hình AgentSee URL. Vào tab Duyệt → Cài đặt Sync."
+        }), 400
+
+    body = request.get_json(silent=True) or {}
+    specific_ids = body.get("ids", [])
+
+    # Lấy conversations cần sync
+    with _get_db() as conn:
+        if specific_ids:
+            placeholders = ",".join("?" * len(specific_ids))
+            rows = conn.execute(
+                f"SELECT * FROM conversations WHERE id IN ({placeholders}) AND synced=0",
+                specific_ids
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE status='approved' AND synced=0"
+            ).fetchall()
+
+    if not rows:
+        return jsonify({"ok": True, "synced": 0, "message": "Không có conversation nào cần sync."})
+
+    synced_ok  = []
+    synced_err = []
+
+    for row in rows:
+        row = dict(row)
+        try:
+            logs = json.loads(row["logs"])
+        except Exception:
+            logs = []
+
+        payload = {
+            "secret":       secret,
+            "customerName": row["customer"],
+            "logs":         logs,
+            "source":       "zalocrawl",
+            "scrapedAt":    row["scraped_at"],
+        }
+
+        try:
+            resp = http_requests.post(url, json=payload, timeout=15,
+                                      headers={"Content-Type": "application/json"})
+            resp.raise_for_status()
+            # Đánh dấu đã sync
+            with _get_db() as conn:
+                conn.execute(
+                    "UPDATE conversations SET synced=1, synced_at=? WHERE id=?",
+                    (datetime.now().isoformat(), row["id"])
+                )
+            synced_ok.append(row["id"])
+            STATE.push_log("SUCCESS",
+                f"[SYNC] ✅ '{row['customer']}' → AgentSee OK")
+        except Exception as e:
+            synced_err.append({"id": row["id"], "error": str(e)})
+            STATE.push_log("ERROR",
+                f"[SYNC] ❌ '{row['customer']}' lỗi: {e}")
+
+    return jsonify({
+        "ok":        True,
+        "synced":    len(synced_ok),
+        "failed":    len(synced_err),
+        "syncedIds": synced_ok,
+        "errors":    synced_err,
+    })
+
+
+# ──────────────────────────────────────────────
 if __name__ == "__main__":
+    init_db()
     print("=" * 55)
-    print("  🤖 ZALO SCRAPER DASHBOARD")
+    print("  🤖 ZALO SCRAPER DASHBOARD v2")
     print("  📍 http://localhost:5000")
+    print(f"  🗄  Database: {DB_PATH}")
     print("=" * 55)
     app.run(debug=False, port=5000, threaded=True)

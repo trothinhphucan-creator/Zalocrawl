@@ -31,9 +31,14 @@ API_SECRET      = "antigravity_secret_2026"
 REQUEST_TIMEOUT = 10
 
 # Khoảng thời gian chờ (giây)
-CLICK_PAUSE      = 2.0   # chờ sau khi click contact để Zalo load chat
+CLICK_PAUSE      = 2.5   # chờ sau khi click contact để Zalo load chat
 SCROLL_PAUSE     = 1.2   # chờ sau khi cuộn sidebar
-COPY_WAIT        = 0.5   # chờ sau Ctrl+A / Ctrl+C
+COPY_WAIT        = 0.6   # chờ sau Ctrl+A / Ctrl+C
+
+# Cài đặt cuộn lịch sử chat
+HISTORY_MAX_SCROLLS = 40   # số lần cuộn lên tối đa mỗi contact
+HISTORY_SCROLL_STEP = 10   # số notch mỗi lần WheelUp
+HISTORY_LOAD_WAIT   = 1.5  # giây chờ Zalo render sau mỗi lần cuộn
 
 # Sidebar layout (tự động tính từ Zalo window rect)
 SIDEBAR_WIDTH_RATIO = 0.32   # sidebar chiếm ~32% chiều rộng cửa sổ
@@ -197,32 +202,75 @@ def _get_contact_name_from_chat_header(layout: ZaloLayout) -> str:
     return ""
 
 
-def _copy_chat_content(layout: ZaloLayout) -> str:
+def _scroll_chat_to_top(layout: ZaloLayout,
+                         max_scrolls: int = HISTORY_MAX_SCROLLS,
+                         scroll_step: int = HISTORY_SCROLL_STEP,
+                         load_wait:   float = HISTORY_LOAD_WAIT) -> None:
     """
-    Copy nội dung chat hiện tại qua Ctrl+A, Ctrl+C.
-    Click vào vùng chat → Ctrl+A → Ctrl+C → đọc clipboard.
+    Cuộn ngược lên đầu lịch sử chat để Zalo lazy-load toàn bộ tin nhắn cũ.
+    Dừng khi clipboard ổn định 2 lần liên tiếp (không có tin mới load thêm).
     """
-    _clear_clipboard()
-
-    # Click vào giữa vùng chat để focus
-    auto.Click(layout.chat_mid_x, layout.chat_mid_y)
+    msg_area_y = layout.chat_top + int((layout.chat_bottom - layout.chat_top) * 0.4)
+    auto.Click(layout.chat_mid_x, msg_area_y)
     time.sleep(0.3)
 
-    # Ctrl+A để chọn tất cả
+    log.info("[SCROLL_UP] Bắt đầu cuộn lên đầu lịch sử chat…")
+    prev_len   = 0
+    stable_cnt = 0
+
+    for i in range(max_scrolls):
+        auto.MoveTo(layout.chat_mid_x, msg_area_y)
+        auto.WheelUp(wheelTimes=scroll_step)
+        time.sleep(load_wait)
+
+        # Thử đo sự thay đổi qua clipboard length
+        _clear_clipboard()
+        auto.SendKeys("{Ctrl}a")
+        time.sleep(0.25)
+        auto.SendKeys("{Ctrl}c")
+        time.sleep(0.25)
+        cur_len = len(_read_clipboard())
+
+        if cur_len == prev_len:
+            stable_cnt += 1
+            log.info("[SCROLL_UP] Ổn định lần %d (%d chars).", stable_cnt, cur_len)
+            if stable_cnt >= 2:
+                log.info("[SCROLL_UP] Đã đến đầu lịch sử sau %d lần cuộn.", i + 1)
+                break
+        else:
+            stable_cnt = 0
+            log.debug("[SCROLL_UP] Lần %d — %d chars.", i + 1, cur_len)
+
+        prev_len = cur_len
+
+    auto.SendKeys("{Escape}")
+    time.sleep(0.2)
+
+
+def _copy_chat_content(layout: ZaloLayout) -> str:
+    """
+    Lấy TOÀN BỘ lịch sử chat:
+    1. Cuộn lên đến đầu để Zalo load hết tin nhắn cũ.
+    2. Ctrl+A → Ctrl+C → đọc clipboard.
+    """
+    # Bước 1: cuộn lên đầu (load full history)
+    _scroll_chat_to_top(layout)
+
+    # Bước 2: copy toàn bộ sau khi đã load xong
+    msg_area_y = layout.chat_top + int((layout.chat_bottom - layout.chat_top) * 0.4)
+    _clear_clipboard()
+    auto.Click(layout.chat_mid_x, msg_area_y)
+    time.sleep(0.3)
     auto.SendKeys("{Ctrl}a")
     time.sleep(COPY_WAIT)
-
-    # Ctrl+C để copy
     auto.SendKeys("{Ctrl}c")
     time.sleep(COPY_WAIT)
 
     text = _read_clipboard()
-    log.debug("[CLIPBOARD] Đọc được %d ký tự.", len(text))
+    log.info("[CLIPBOARD] Đọc được %d ký tự toàn bộ lịch sử.", len(text))
 
-    # Bỏ focus (nhấn Escape)
     auto.SendKeys("{Escape}")
     time.sleep(0.2)
-
     return text
 
 

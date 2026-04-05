@@ -335,15 +335,26 @@ def _is_junk(text: str) -> bool:
     return False
 
 
-def parse_zalo_texts(raw_texts: list[str], customer_name: str) -> list[dict]:
+def parse_zalo_texts(
+    raw_texts: list[str],
+    customer_name: str,
+) -> tuple[list[dict], list[str]]:
     """
     Chuyển list text thô thành log chat có cấu trúc.
+    Trả về: (logs, account_senders)
 
-    Hỗ trợ 2 định dạng input:
-    1. List từ accessibility tree: ["10:00", "Khách hàng A", "Xin chào", ...]
-    2. String từ clipboard (multiline): "10:00 Khách hàng A\nXin chào\n..."
+    - logs: [{sender, message, role}]
+        role = 'USER'  — tin nhắn của khách hàng
+        role = 'BOT'   — tin nhắn tài khoản shop (brand voice)
+    - account_senders: list tên tài khoản shop xuất hiện trong chat
+
+    Logic phân biệt USER ↔ BOT:
+        sender == customerName          → USER
+        sender == "Bạn" / "Ban" / "You" → BOT  (Zalo PC hiển thị tin mình gửi)
+        sender != customerName          → BOT   (tên shop, nhân viên...)
     """
-    # Nếu nhận vào 1 string lớn từ clipboard → split thành lines
+    SELF_ALIASES = {"bạn", "ban", "you"}
+
     if len(raw_texts) == 1 and "\n" in raw_texts[0]:
         raw_texts = raw_texts[0].splitlines()
 
@@ -352,8 +363,9 @@ def parse_zalo_texts(raw_texts: list[str], customer_name: str) -> list[dict]:
     log.debug("[PARSE] %d raw → %d clean tokens", len(raw_texts), len(clean))
 
     if not clean:
-        return logs
+        return [], []
 
+    customer_norm = (customer_name or "").strip().lower()
     known_senders: set[str] = set()
     if customer_name:
         known_senders.add(customer_name.strip())
@@ -375,39 +387,82 @@ def parse_zalo_texts(raw_texts: list[str], customer_name: str) -> list[dict]:
             )
         )
 
+        def _role(sender: str) -> str:
+            s = sender.lower()
+            if s in SELF_ALIASES:
+                return "BOT"
+            if customer_norm and s == customer_norm:
+                return "USER"
+            return "BOT"  # tên shop hoặc nhân viên → brand voice
+
         if looks_like_name and i + 1 < len(clean):
             current_sender = token
             known_senders.add(token)
             message = clean[i + 1]
-            logs.append({"sender": current_sender, "message": message})
+            logs.append({
+                "sender":  current_sender,
+                "message": message,
+                "role":    _role(current_sender),
+            })
             i += 2
         else:
-            if current_sender:
-                logs.append({"sender": current_sender, "message": token})
-            else:
-                logs.append({"sender": "Unknown", "message": token})
+            sender = current_sender or "Unknown"
+            logs.append({
+                "sender":  sender,
+                "message": token,
+                "role":    _role(sender),
+            })
             i += 1
 
-    return logs
+    # account_senders = tất cả senders xuất hiện mà KHÔNG phải khách hàng
+    account_senders = sorted(
+        s for s in known_senders
+        if s.lower() != customer_norm and s.lower() not in SELF_ALIASES
+    )
+
+    user_cnt = sum(1 for m in logs if m["role"] == "USER")
+    bot_cnt  = sum(1 for m in logs if m["role"] == "BOT")
+    log.info(
+        "[PARSE] %d msgs — USER: %d, BOT: %d (brand voice) | account: %s",
+        len(logs), user_cnt, bot_cnt,
+        ", ".join(account_senders) if account_senders else "(tự detect)",
+    )
+    return logs, account_senders
+
 
 
 # ─────────────────────────────────────────────
 #  PUSH API
 # ─────────────────────────────────────────────
 
-def push_to_server(customer_name: str, parsed_logs: list[dict]) -> bool:
-    """Gửi data lên server CRM. Trả về True nếu thành công."""
+def push_to_server(
+    customer_name: str,
+    parsed_logs: list[dict],
+    account_senders: list[str] | None = None,
+) -> bool:
+    """
+    Gửi data lên server CRM. Trả về True nếu thành công.
+    account_senders: danh sách tên tài khoản shop (khác với khách hàng).
+    AgentSee dùng danh sách này để phân loại role=BOT (brand voice).
+    """
     if not parsed_logs:
         log.warning("[PUSH] Bỏ qua '%s' — không có log nào.", customer_name)
         return False
 
     payload = {
-        "secret":       API_SECRET,
-        "customerName": customer_name,
-        "logs":         parsed_logs,
+        "secret":         API_SECRET,
+        "customerName":   customer_name,
+        "logs":           parsed_logs,
+        # Tên tài khoản shop — AgentSee sẽ gán role=BOT cho những sender này
+        # (ngoài ra server cũng tự thêm "Bạn" và BOT_SENDER_NAME defaults)
+        "accountSenders": account_senders or [],
     }
 
-    log.info("[PUSH] Đang gửi %d tin nhắn của '%s'…", len(parsed_logs), customer_name)
+    log.info(
+        "[PUSH] Đang gửi %d msgs của '%s' (BOT senders: %s)…",
+        len(parsed_logs), customer_name,
+        ", ".join(account_senders) if account_senders else "auto-detect",
+    )
 
     try:
         r = requests.post(
@@ -554,12 +609,12 @@ def main_scraper(limit: int = 100):
                         contact_name = ln
                         break
 
-            # ── Parse ──
-            parsed_logs = parse_zalo_texts(raw_texts, contact_name)
+            # ── Parse — trả về (logs, account_senders) ──
+            parsed_logs, account_senders = parse_zalo_texts(raw_texts, contact_name)
             log.info("[PARSE] Parse được %d tin nhắn.", len(parsed_logs))
 
-            # ── Push ──
-            push_to_server(contact_name, parsed_logs)
+            # ── Push — kèm account_senders để AgentSee phân loại brand voice ──
+            push_to_server(contact_name, parsed_logs, account_senders)
 
             scraped_names.add(dedup_key)   # đánh dấu theo positional key
             total_scraped += 1

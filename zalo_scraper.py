@@ -26,7 +26,10 @@ if hasattr(sys.stderr, "reconfigure"):
 # ─────────────────────────────────────────────
 #  CẤU HÌNH CHUNG
 # ─────────────────────────────────────────────
-API_ENDPOINT    = "http://localhost:3000/api/crm/import-chats"
+# Luôn lưu vào local server — KHÔNG push thẳng lên CRM
+# (Vào dashboard duyệt rồi mới sync AgentSee)
+LOCAL_SERVER    = "http://localhost:5000"
+API_ENDPOINT    = f"{LOCAL_SERVER}/api/conversations/ingest"
 API_SECRET      = "antigravity_secret_2026"
 REQUEST_TIMEOUT = 10
 
@@ -435,33 +438,32 @@ def parse_zalo_texts(
 #  PUSH API
 # ─────────────────────────────────────────────
 
-def push_to_server(
+def save_local(
     customer_name: str,
     parsed_logs: list[dict],
     account_senders: list[str] | None = None,
 ) -> bool:
     """
-    Gửi data lên server CRM. Trả về True nếu thành công.
-    account_senders: danh sách tên tài khoản shop (khác với khách hàng).
-    AgentSee dùng danh sách này để phân loại role=BOT (brand voice).
+    Lưu data vào local Flask server (SQLite).
+    KHÔNG push thẳng lên CRM — phải review trong dashboard trước.
     """
     if not parsed_logs:
-        log.warning("[PUSH] Bỏ qua '%s' — không có log nào.", customer_name)
+        log.warning("[SAVE] Bỏ qua '%s' — không có log nào.", customer_name)
         return False
+
+    user_cnt = sum(1 for m in parsed_logs if m.get("role") == "USER")
+    bot_cnt  = len(parsed_logs) - user_cnt
 
     payload = {
         "secret":         API_SECRET,
         "customerName":   customer_name,
         "logs":           parsed_logs,
-        # Tên tài khoản shop — AgentSee sẽ gán role=BOT cho những sender này
-        # (ngoài ra server cũng tự thêm "Bạn" và BOT_SENDER_NAME defaults)
         "accountSenders": account_senders or [],
     }
 
     log.info(
-        "[PUSH] Đang gửi %d msgs của '%s' (BOT senders: %s)…",
-        len(parsed_logs), customer_name,
-        ", ".join(account_senders) if account_senders else "auto-detect",
+        "[SAVE] Đang lưu '%s' — %d msgs (khách: %d, shop: %d)…",
+        customer_name, len(parsed_logs), user_cnt, bot_cnt,
     )
 
     try:
@@ -472,17 +474,20 @@ def push_to_server(
             headers={"Content-Type": "application/json"},
         )
         r.raise_for_status()
-        log.info("[PUSH] ✅ Thành công! Status=%d", r.status_code)
+        log.info("[SAVE] ✅ Đã lưu local! (chờ duyệt trong dashboard)")
         return True
     except requests.exceptions.ConnectionError:
-        log.error("[PUSH] ❌ Không kết nối được server (%s).", API_ENDPOINT)
+        log.error("[SAVE] ❌ Server local không chạy? Hãy kiểm tra http://localhost:5000")
     except requests.exceptions.Timeout:
-        log.error("[PUSH] ❌ Timeout sau %ds.", REQUEST_TIMEOUT)
+        log.error("[SAVE] ❌ Timeout sau %ds.", REQUEST_TIMEOUT)
     except requests.exceptions.HTTPError as e:
-        log.error("[PUSH] ❌ HTTP Error: %s", e)
+        log.error("[SAVE] ❌ HTTP Error: %s", e)
     except Exception as e:
-        log.error("[PUSH] ❌ Lỗi: %s", e)
+        log.error("[SAVE] ❌ Lỗi: %s", e)
     return False
+
+# alias cho backward compat
+push_to_server = save_local
 
 
 # ─────────────────────────────────────────────

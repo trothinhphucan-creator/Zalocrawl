@@ -238,28 +238,11 @@ def _parse_log_line(line: str):
     if m and "(Bạn)" not in m.group(1):
         _pending["account_senders"] = [s.strip() for s in m.group(1).split(",") if s.strip()]
 
-    if "✅ Thành công" in line and "[PUSH]" in line:
-        STATE.total_pushed += 1
-        name = _pending["name"] or STATE.current_name or "Unknown"
-        entry = {
-            "name":   name,
-            "logs":   _pending["logs"],
-            "status": "ok",
-            "time":   datetime.now().strftime("%H:%M:%S"),
-        }
-        STATE.scraped_list.append(entry)
+    # Khi lưu local thành công → scraper log "[SAVE] ✅ Đã lưu local!"
+    # Lúc này api_ingest đã tự lưu DB + cập nhật STATE → không cần làm gì thêm ở đây.
+    # Chỉ cần track để hiển thị log.
 
-        # ── Lưu vào SQLite ──
-        try:
-            acc = _pending.get("account_senders", [])
-            conv_id = db_save_conversation(name, _pending.get("log_data", []), acc)
-            STATE.push_log("INFO", f"[DB] Đã lưu ID={conv_id} — '{name}' ({_pending['logs']} msgs)")
-        except Exception as e:
-            STATE.push_log("WARNING", f"[DB] Lỗi lưu: {e}")
-
-        _pending = {"name": "", "logs": 0, "log_data": [], "account_senders": []}
-
-    if "❌" in line and "[PUSH]" in line:
+    if "[SAVE] ❌" in line:
         STATE.total_failed += 1
         name = _pending["name"] or STATE.current_name or "Unknown"
         STATE.scraped_list.append({
@@ -268,12 +251,18 @@ def _parse_log_line(line: str):
             "status": "error",
             "time":   datetime.now().strftime("%H:%M:%S"),
         })
-        try:
-            db_save_conversation(name, _pending.get("log_data", []),
-                                 _pending.get("account_senders", []))
-        except Exception:
-            pass
         _pending = {"name": "", "logs": 0, "log_data": [], "account_senders": []}
+
+    # Backward compat: nếu còn log cũ dùng [PUSH]
+    if "✅ Thành công" in line and "[PUSH]" in line:
+        # Chỉ update counter nếu api_ingest chưa làm (lần chạy cũ)
+        pass  # api_ingest đã xử lý
+
+    if "❌" in line and "[PUSH]" in line:
+        STATE.total_failed += 1
+        _pending = {"name": "", "logs": 0, "log_data": [], "account_senders": []}
+
+
 
 
 
@@ -416,6 +405,63 @@ def api_logs_stream():
 # ──────────────────────────────────────────────
 #  REST API ENDPOINTS — Conversations (SQLite)
 # ──────────────────────────────────────────────
+
+# ──────────────────────────────────────────────
+#  INGEST — Scraper → Local SQLite (không push CRM)
+# ──────────────────────────────────────────────
+
+@app.route("/api/conversations/ingest", methods=["POST"])
+def api_ingest():
+    """
+    Endpoint nội bộ — nhận data từ zalo_scraper.py và lưu vào SQLite.
+    KHÔNG gửi đi đâu cả. Người dùng review trong dashboard rồi mới Sync.
+
+    Payload: {
+      secret, customerName, logs: [{sender, message, role}],
+      accountSenders: [...]
+    }
+    """
+    body = request.get_json(silent=True) or {}
+
+    # Basic auth bằng secret
+    if body.get("secret") != "antigravity_secret_2026":
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+    customer      = (body.get("customerName") or "").strip()
+    logs          = body.get("logs", [])
+    acc_senders   = body.get("accountSenders", [])
+
+    if not customer:
+        return jsonify({"ok": False, "error": "customerName trống"}), 400
+    if not logs:
+        return jsonify({"ok": False, "error": "logs trống"}), 400
+
+    try:
+        conv_id = db_save_conversation(customer, logs, acc_senders)
+        user_cnt = sum(1 for m in logs if m.get("role") == "USER")
+        bot_cnt  = len(logs) - user_cnt
+        STATE.push_log("SUCCESS",
+            f"[DB] Đã lưu '{customer}' — {len(logs)} msgs (khách: {user_cnt}, shop: {bot_cnt})")
+        STATE.total_pushed += 1
+        STATE.scraped_list.append({
+            "name":   customer,
+            "logs":   len(logs),
+            "status": "ok",
+            "time":   datetime.now().strftime("%H:%M:%S"),
+        })
+        return jsonify({
+            "ok":        True,
+            "id":        conv_id,
+            "customer":  customer,
+            "msgCount":  len(logs),
+            "userMsgs":  user_cnt,
+            "botMsgs":   bot_cnt,
+            "status":    "pending",   # luôn pending, chờ review
+        })
+    except Exception as e:
+        STATE.push_log("ERROR", f"[DB] Lỗi lưu '{customer}': {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 
 @app.route("/api/conversations")
 def api_conversations():

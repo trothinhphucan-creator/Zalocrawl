@@ -99,6 +99,7 @@
       font-size: 17px; font-weight: 700;
       background: linear-gradient(135deg, #63b3ed, #9f7aea);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
       letter-spacing: -0.3px;
     }
     .brand-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
@@ -614,6 +615,19 @@
     .chip-approved { background: rgba(104,211,145,0.12); color: var(--success); }
     .chip-rejected { background: rgba(252,129,129,0.12); color: var(--danger); }
     .chip-synced   { background: rgba(99,179,237,0.12);  color: var(--accent); }
+
+    /* Bulk select */
+    .bulk-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 32px;
+      background: rgba(99,179,237,0.08);
+      border-bottom: 1px solid rgba(99,179,237,0.2);
+      max-width: 1440px; margin: 0 auto;
+      gap: 12px; flex-wrap: wrap;
+      font-size: 13px; font-weight: 600; color: var(--accent);
+    }
+    tr.row-selected td { background: rgba(99,179,237,0.06) !important; }
+
     .action-btns { display: flex; gap: 5px; }
     .ico-btn {
       width: 30px; height: 30px; border-radius: 7px;
@@ -943,22 +957,48 @@
       </div>
     </div>
 
-    <!-- Table -->
-    <div class="review-grid">
+      <!-- Bulk action bar (hiện khi có item được chọn) -->
+      <div class="bulk-bar" id="bulkBar" style="display:none">
+        <span id="bulkCount">0 được chọn</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn-sm" style="background:rgba(104,211,145,0.2);color:var(--success);border:1px solid var(--success)"
+                  onclick="bulkSetStatus('approved')">
+            <i class="fa-solid fa-check"></i> Duyệt tất cả
+          </button>
+          <button class="btn-sm" style="background:rgba(252,129,129,0.2);color:var(--danger);border:1px solid var(--danger)"
+                  onclick="bulkSetStatus('rejected')">
+            <i class="fa-solid fa-xmark"></i> Từ chối tất cả
+          </button>
+          <button class="btn-sm btn-sync" onclick="bulkSync()">
+            <i class="fa-solid fa-upload"></i> Sync AgentSee
+          </button>
+          <button class="btn-sm" style="background:rgba(252,129,129,0.1);color:var(--danger);border:1px solid rgba(252,129,129,0.3)"
+                  onclick="bulkDelete()">
+            <i class="fa-solid fa-trash"></i> Xóa
+          </button>
+          <button class="btn-sm btn-cfg" onclick="clearSelection()">Hủy chọn</button>
+        </div>
+      </div>
+
       <div class="review-card">
         <table class="review-table">
           <thead>
             <tr>
-              <th style="width:50px">#</th>
+              <th style="width:36px">
+                <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"
+                       title="Chọn tất cả" style="cursor:pointer;accent-color:var(--accent);width:15px;height:15px">
+              </th>
+              <th style="width:44px">#</th>
               <th>Khách hàng</th>
-              <th style="width:70px">Msgs</th>
-              <th style="width:150px">Thời gian</th>
-              <th style="width:120px">Trạng thái</th>
-              <th style="width:180px">Hành động</th>
+              <th style="width:55px">User</th>
+              <th style="width:55px">Bot</th>
+              <th style="width:130px">Thời gian</th>
+              <th style="width:110px">Trạng thái</th>
+              <th style="width:165px">Hành động</th>
             </tr>
           </thead>
           <tbody id="reviewTableBody">
-            <tr><td colspan="6">
+            <tr><td colspan="8">
               <div class="empty-state">
                 <i class="fa-regular fa-folder-open"></i>
                 Chưa có dữ liệu. Chạy scraper để thu thập.
@@ -1344,44 +1384,141 @@
     loadConversations();
   }
 
+  /* ── Bulk select state ── */
+  let selectedIds = new Set();
+
+  function toggleSelectAll(cb) {
+    const boxes = document.querySelectorAll('.row-check');
+    boxes.forEach(b => {
+      b.checked = cb.checked;
+      const id = parseInt(b.dataset.id);
+      cb.checked ? selectedIds.add(id) : selectedIds.delete(id);
+    });
+    updateBulkBar();
+  }
+
+  function onRowCheck(cb) {
+    const id = parseInt(cb.dataset.id);
+    cb.checked ? selectedIds.add(id) : selectedIds.delete(id);
+    // Update select-all state
+    const all  = document.querySelectorAll('.row-check');
+    const chkd = document.querySelectorAll('.row-check:checked');
+    const sa   = document.getElementById('selectAll');
+    if (sa) { sa.checked = all.length > 0 && chkd.length === all.length; sa.indeterminate = chkd.length > 0 && chkd.length < all.length; }
+    updateBulkBar();
+  }
+
+  function updateBulkBar() {
+    const bar = document.getElementById('bulkBar');
+    const cnt = document.getElementById('bulkCount');
+    if (selectedIds.size > 0) {
+      bar.style.display = 'flex';
+      cnt.textContent   = `${selectedIds.size} được chọn`;
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll('.row-check').forEach(b => b.checked = false);
+    const sa = document.getElementById('selectAll');
+    if (sa) { sa.checked = false; sa.indeterminate = false; }
+    updateBulkBar();
+  }
+
   function renderReviewTable(list) {
     const tbody = document.getElementById('reviewTableBody');
     if (!list || !list.length) {
-      tbody.innerHTML = `<tr><td colspan="6">
+      tbody.innerHTML = `<tr><td colspan="8">
         <div class="empty-state">
           <i class="fa-regular fa-folder-open"></i>
           Không có hội thoại nào${convFilter !== 'all' ? ' với trạng thái này' : ''}.
         </div></td></tr>`;
+      clearSelection();
       return;
     }
     tbody.innerHTML = list.map((c, i) => {
-      const init   = (c.customer||'?').charAt(0).toUpperCase();
-      const status = c.status || 'pending';
-      const synced = c.synced === 1;
-      const chipCls = synced ? 'chip-synced' : `chip-${status}`;
-      const chipTxt = synced ? '☁️ Synced' : { pending:'⏳ Chờ', approved:'✅ Duyệt', rejected:'❌ Từ chối' }[status] || status;
-      const scrapedAt = c.scraped_at ? c.scraped_at.replace('T',' ').substring(0,16) : '—';
-      return `<tr>
+      const init     = (c.customer||'?').charAt(0).toUpperCase();
+      const status   = c.status || 'pending';
+      const synced   = c.synced === 1;
+      const chipCls  = synced ? 'chip-synced' : `chip-${status}`;
+      const chipTxt  = synced ? '☁️ Synced' : {pending:'⏳ Chờ', approved:'✅ Duyệt', rejected:'❌ Từ chối'}[status] || status;
+      const at       = c.scraped_at ? c.scraped_at.replace('T',' ').substring(0,16) : '—';
+      const userCnt  = c.user_msg_count ?? '?';
+      const botCnt   = (c.msg_count||0) - (c.user_msg_count||0);
+      const isSelected = selectedIds.has(c.id);
+      return `<tr class="${isSelected?'row-selected':''}">
+        <td style="text-align:center">
+          <input type="checkbox" class="row-check"
+                 data-id="${c.id}" ${isSelected?'checked':''}
+                 onchange="onRowCheck(this)"
+                 style="cursor:pointer;accent-color:var(--accent);width:15px;height:15px">
+        </td>
         <td style="color:var(--text-muted)">${i+1}</td>
         <td>
           <div class="name-cell">
-            <div class="avatar">${init}</div>${escapeHtml(c.customer||'—')}
+            <div class="avatar">${init}</div>
+            <div>
+              <div>${escapeHtml(c.customer||'—')}</div>
+              ${c.zalo_uid ? `<div style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono)">UID: ${c.zalo_uid}</div>` : ''}
+            </div>
           </div>
         </td>
-        <td>${c.msg_count || 0}</td>
-        <td style="font-family:var(--font-mono);font-size:12px">${escapeHtml(scrapedAt)}</td>
+        <td style="color:var(--accent);font-weight:600;text-align:center">${userCnt}</td>
+        <td style="color:var(--text-muted);text-align:center">${botCnt >= 0 ? botCnt : '?'}</td>
+        <td style="font-family:var(--font-mono);font-size:11px">${escapeHtml(at)}</td>
         <td><span class="status-chip ${chipCls}">${chipTxt}</span></td>
         <td>
           <div class="action-btns">
-            <button class="ico-btn view"    title="Xem"      onclick="openChatModal(${c.id})"><i class="fa-solid fa-eye"></i></button>
-            <button class="ico-btn approve" title="Duyệt"    onclick="setConvStatus(${c.id},'approved')" ${status==='approved'?'disabled':''}><i class="fa-solid fa-check"></i></button>
-            <button class="ico-btn reject"  title="Từ chối"  onclick="setConvStatus(${c.id},'rejected')" ${status==='rejected'?'disabled':''}><i class="fa-solid fa-xmark"></i></button>
-            <button class="ico-btn sync-one" title="Sync ngay" onclick="syncOne(${c.id})" ${synced?'disabled':''}><i class="fa-solid fa-upload"></i></button>
-            <button class="ico-btn del"     title="Xóa"      onclick="deleteConv(${c.id})"><i class="fa-solid fa-trash"></i></button>
+            <button class="ico-btn view"     title="Xem chat"   onclick="openChatModal(${c.id})"><i class="fa-solid fa-eye"></i></button>
+            <button class="ico-btn approve"  title="Duyệt"      onclick="setConvStatus(${c.id},'approved')" ${status==='approved'?'disabled':''}><i class="fa-solid fa-check"></i></button>
+            <button class="ico-btn reject"   title="Từ chối"    onclick="setConvStatus(${c.id},'rejected')" ${status==='rejected'?'disabled':''}><i class="fa-solid fa-xmark"></i></button>
+            <button class="ico-btn sync-one" title="Sync ngay"  onclick="syncOne(${c.id})" ${synced?'disabled':''}><i class="fa-solid fa-upload"></i></button>
+            <button class="ico-btn del"      title="Xóa"        onclick="deleteConv(${c.id})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
       </tr>`;
     }).join('');
+    updateBulkBar();
+  }
+
+  /* ── Bulk actions ── */
+  async function bulkSetStatus(status) {
+    if (!selectedIds.size) return;
+    const label = status === 'approved' ? 'duyệt' : 'từ chối';
+    if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} ${selectedIds.size} hội thoại?`)) return;
+    await Promise.all([...selectedIds].map(id =>
+      fetch(`/api/conversations/${id}/status`, {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({status})
+      })
+    ));
+    clearSelection();
+    loadConversations();
+  }
+
+  async function bulkSync() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Sync ${selectedIds.size} hội thoại lên AgentSee?`)) return;
+    const res  = await fetch('/api/sync', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ ids: [...selectedIds] })
+    });
+    const d = await res.json();
+    alert(`✅ Sync xong: ${d.synced} thành công, ${d.failed} thất bại`);
+    clearSelection();
+    loadConversations();
+  }
+
+  async function bulkDelete() {
+    if (!selectedIds.size) return;
+    if (!confirm(`Xóa vĩnh viễn ${selectedIds.size} hội thoại?`)) return;
+    await Promise.all([...selectedIds].map(id =>
+      fetch(`/api/conversations/${id}`, { method:'DELETE' })
+    ));
+    clearSelection();
+    loadConversations();
   }
 
   async function setConvStatus(id, status) {
@@ -1402,33 +1539,46 @@
   async function openChatModal(id) {
     const conv = convData.find(c => c.id === id);
     if (!conv) return;
+    const userCnt = conv.user_msg_count ?? '?';
+    const botCnt  = (conv.msg_count||0) - (conv.user_msg_count||0);
     document.getElementById('modalTitle').textContent = conv.customer || 'Hội thoại';
-    document.getElementById('modalSub').textContent   = `${conv.msg_count || 0} tin nhắn • ${(conv.scraped_at||'').substring(0,16)}`;
+    document.getElementById('modalSub').textContent   =
+      `${conv.msg_count || 0} tin nhắn (Khách: ${userCnt} | Shop: ${botCnt >= 0 ? botCnt : '?'}) • ${(conv.scraped_at||'').substring(0,16)}`;
     let logs = [];
     try { logs = JSON.parse(conv.logs || '[]'); } catch(_) {}
     const bubbles = document.getElementById('chatBubbles');
     if (!logs.length) {
       bubbles.innerHTML = '<div style="color:var(--text-muted);font-size:13px;text-align:center">Không có tin nhắn nào được ghi lại.</div>';
     } else {
-      const OWNER = logs[0]?.sender || '';
+      // Dùng field role nếu có, fallback: phân loại bằng customer name
+      const customerName = (conv.customer||'').toLowerCase();
       bubbles.innerHTML = logs.map(m => {
-        const isMe = m.sender !== OWNER;
-        return `<div class="bubble-row ${isMe?'me':''}">
-          <div class="bubble-avatar">${(m.sender||'?').charAt(0)}</div>
+        const role = m.role || (
+          m.sender && m.sender.toLowerCase() === customerName ? 'USER' : 'BOT'
+        );
+        const isBot = role === 'BOT';
+        const senderLabel = isBot
+          ? `<span style="font-size:10px;color:var(--accent);font-weight:600">🏪 SHOP</span> ${escapeHtml(m.sender||'')}`
+          : `<span style="font-size:10px;color:#68D391;font-weight:600">👤 KHÁCH</span> ${escapeHtml(m.sender||'')}`;
+        return `<div class="bubble-row ${isBot ? 'me' : ''}">
+          <div class="bubble-avatar" style="${isBot ? 'background:linear-gradient(135deg,var(--accent),#7C3AED)' : ''}">${(m.sender||'?').charAt(0).toUpperCase()}</div>
           <div>
-            <div class="bubble-sender">${escapeHtml(m.sender||'')}</div>
+            <div class="bubble-sender">${senderLabel}</div>
             <div class="bubble">${escapeHtml(m.message||'')}</div>
           </div>
         </div>`;
       }).join('');
     }
     document.getElementById('chatModal').classList.add('open');
+    // Scroll to bottom
+    setTimeout(() => { bubbles.scrollTop = bubbles.scrollHeight; }, 50);
   }
 
   function closeChatModal(e) {
     if (e && e.target !== document.getElementById('chatModal')) return;
     document.getElementById('chatModal').classList.remove('open');
   }
+
 
   /* ══════════════════════════════════════
      SYNC TO AGENTSEE

@@ -596,24 +596,43 @@ def main_scraper(limit: int = 100):
                 if clip_text:
                     raw_texts = [clip_text]
 
-            log.info("[READ] Đọc được %d phần tử text.", len(raw_texts))
+            # ── Parse (lần 1: customer_name = "" để auto-detect) ──
+            # Không đoán tên từ dòng đầu clipboard (dễ lấy nhầm message).
+            # Để parse_zalo_texts phân loại BOT ("Bạn") và USER (tên thực),
+            # sau đó lấy tên USER làm contact_name.
+            parsed_logs, account_senders = parse_zalo_texts(raw_texts, customer_name="")
 
-            # ── Trích xuất tên thực từ clipboard (dòng đầu tiên có nghĩa) ──
-            if raw_texts:
-                first = raw_texts[0] if len(raw_texts) > 1 else ""
-                lines = (raw_texts[0] if len(raw_texts) == 1 else first).splitlines()
-                for ln in lines[:5]:
-                    ln = ln.strip()
-                    # Tên người: ngắn, không phải thời gian
-                    if ln and 2 < len(ln) < 60 and not re.match(r'^\d{1,2}[:/]\d{2}', ln):
-                        contact_name = ln
-                        break
+            # ── Auto-detect customer name từ USER messages ──────
+            user_msgs = [m for m in parsed_logs if m.get("role") == "USER"]
+            bot_msgs  = [m for m in parsed_logs if m.get("role") == "BOT"]
 
-            # ── Parse — trả về (logs, account_senders) ──
-            parsed_logs, account_senders = parse_zalo_texts(raw_texts, contact_name)
-            log.info("[PARSE] Parse được %d tin nhắn.", len(parsed_logs))
+            if user_msgs:
+                # Sender xuất hiện nhiều nhất trong USER msgs = khách hàng
+                from collections import Counter
+                user_sender_counts = Counter(m["sender"] for m in user_msgs)
+                contact_name = user_sender_counts.most_common(1)[0][0]
+            elif parsed_logs:
+                # Fallback: sender đầu tiên không phải self-alias
+                SELF = {"bạn", "ban", "you"}
+                contact_name = next(
+                    (m["sender"] for m in parsed_logs
+                     if m["sender"].lower() not in SELF),
+                    f"Khách_{dedup_key}"
+                )
+            # else: giữ placeholder "Khách_{dedup_key}"
 
-            # ── Push — kèm account_senders để AgentSee phân loại brand voice ──
+            # account_senders = BOT senders trừ "Bạn" variants
+            SELF_SET = {"bạn", "ban", "you"}
+            account_senders = sorted(set(
+                m["sender"] for m in bot_msgs
+                if m["sender"].lower() not in SELF_SET
+            ))
+
+            log.info("[PARSE] Parse được %d tin nhắn — Khách: '%s' | BOT: %s",
+                     len(parsed_logs), contact_name,
+                     ", ".join(account_senders) or "(Bạn)")
+
+            # ── Push ──
             push_to_server(contact_name, parsed_logs, account_senders)
 
             scraped_names.add(dedup_key)   # đánh dấu theo positional key

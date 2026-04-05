@@ -53,7 +53,15 @@ def init_db():
         except Exception:
             pass  # cột đã tồn tại
         try:
-            conn.execute("ALTER TABLE conversations ADD COLUMN zalo_name TEXT DEFAULT NULL")
+            conn.execute("ALTER TABLE conversations ADD COLUMN bot_msgs       TEXT DEFAULT '[]'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN account_senders TEXT DEFAULT '[]'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN user_msg_count  INTEGER DEFAULT 0")
         except Exception:
             pass
         conn.execute("""
@@ -82,14 +90,28 @@ def _get_db():
         conn.close()
 
 
-def db_save_conversation(customer: str, logs: list) -> int:
-    """Lưu conversation mới vào DB. Trả về ID."""
+def db_save_conversation(customer: str, logs: list, account_senders: list = None) -> int:
+    """
+    Lưu conversation vào DB.
+    logs: [{sender, message, role}] — tự tách USER vs BOT.
+    """
+    user_logs = [m for m in logs if m.get("role") == "USER"]
+    bot_logs  = [m for m in logs if m.get("role") == "BOT"]
     with _get_db() as conn:
         cur = conn.execute(
-            """INSERT INTO conversations (customer, logs, msg_count, scraped_at, status, synced)
-               VALUES (?, ?, ?, ?, 'pending', 0)""",
-            (customer, json.dumps(logs, ensure_ascii=False),
-             len(logs), datetime.now().isoformat())
+            """INSERT INTO conversations
+               (customer, logs, bot_msgs, account_senders,
+                msg_count, user_msg_count, scraped_at, status, synced)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0)""",
+            (
+                customer,
+                json.dumps(logs, ensure_ascii=False),
+                json.dumps(bot_logs, ensure_ascii=False),
+                json.dumps(account_senders or [], ensure_ascii=False),
+                len(logs),
+                len(user_logs),
+                datetime.now().isoformat(),
+            )
         )
         return cur.lastrowid
 
@@ -200,9 +222,21 @@ def _parse_log_line(line: str):
             STATE.current_name = name
             break
 
-    m = re.search(r"Parse được (\d+) tin nhắn", line)
+    # Parse "Parse được N tin nhắn — Khách: 'Tên' | BOT: Bé Mầm"
+    m = re.search(r"Parse được (\d+) tin nhắn.*Khách: '(.+?)'", line)
     if m:
         _pending["logs"] = int(m.group(1))
+        _pending["name"] = m.group(2).strip()
+        STATE.current_name = _pending["name"]
+    else:
+        m2 = re.search(r"Parse được (\d+) tin nhắn", line)
+        if m2:
+            _pending["logs"] = int(m2.group(1))
+
+    # Parse account_senders từ "| BOT: Bé Mầm, Tinni Store"
+    m = re.search(r"\| BOT: (.+)$", line)
+    if m and "(Bạn)" not in m.group(1):
+        _pending["account_senders"] = [s.strip() for s in m.group(1).split(",") if s.strip()]
 
     if "✅ Thành công" in line and "[PUSH]" in line:
         STATE.total_pushed += 1
@@ -217,12 +251,13 @@ def _parse_log_line(line: str):
 
         # ── Lưu vào SQLite ──
         try:
-            conv_id = db_save_conversation(name, _pending.get("log_data", []))
-            STATE.push_log("INFO", f"[DB] Đã lưu ID={conv_id} — '{name}'")
+            acc = _pending.get("account_senders", [])
+            conv_id = db_save_conversation(name, _pending.get("log_data", []), acc)
+            STATE.push_log("INFO", f"[DB] Đã lưu ID={conv_id} — '{name}' ({_pending['logs']} msgs)")
         except Exception as e:
             STATE.push_log("WARNING", f"[DB] Lỗi lưu: {e}")
 
-        _pending = {"name": "", "logs": 0, "log_data": []}
+        _pending = {"name": "", "logs": 0, "log_data": [], "account_senders": []}
 
     if "❌" in line and "[PUSH]" in line:
         STATE.total_failed += 1
@@ -233,14 +268,13 @@ def _parse_log_line(line: str):
             "status": "error",
             "time":   datetime.now().strftime("%H:%M:%S"),
         })
-
-        # Lưu vào DB dù push lỗi (status=pending để retry)
         try:
-            db_save_conversation(name, _pending.get("log_data", []))
+            db_save_conversation(name, _pending.get("log_data", []),
+                                 _pending.get("account_senders", []))
         except Exception:
             pass
+        _pending = {"name": "", "logs": 0, "log_data": [], "account_senders": []}
 
-        _pending = {"name": "", "logs": 0, "log_data": []}
 
 
 def _run_scraper_process(config: dict):

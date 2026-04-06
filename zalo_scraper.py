@@ -150,6 +150,15 @@ class ZaloLayout:
         self.sidebar_bottom = r.bottom
         self.sidebar_mid_x  = (self.sidebar_left + self.sidebar_right) // 2
 
+        # Ô tìm kiếm Zalo: nằm trên header sidebar
+        # Zalo PC: search box ở y ≈ win_top + 110px, x = giữa sidebar
+        self.search_x = self.sidebar_mid_x
+        self.search_y = r.top + 110   # có thể cần cận chỉnh theo Zalo version
+
+        # Kết quả tìm kiếm: item đầu tiên ≈ win_top + 190px
+        self.search_result_x = self.sidebar_mid_x
+        self.search_result_y = r.top + 190
+
         # Chat panel: phần còn lại
         self.chat_left   = self.sidebar_right
         self.chat_right  = r.right
@@ -171,6 +180,8 @@ class ZaloLayout:
                  self.sidebar_left, self.sidebar_right,
                  self.sidebar_top,  self.sidebar_bottom,
                  self.visible_contact_count())
+        log.info("[LAYOUT] SearchBox: (%d, %d)",
+                 self.search_x, self.search_y)
         log.info("[LAYOUT] ChatPanel: x=%d→%d  mid=(%d,%d)",
                  self.chat_left, self.chat_right,
                  self.chat_mid_x, self.chat_mid_y)
@@ -185,14 +196,10 @@ def _get_contact_name_from_chat_header(layout: ZaloLayout) -> str:
     Đọc tên contact hiện tại từ header khung chat (dòng đầu tiên).
     Chiến thuật: click vào header chat → select all → copy.
     """
-    # Click vào vùng header chat (phần trên cùng của chat panel)
-    header_y = layout.chat_top + 20  # 20px xuống từ đầu chat panel
+    header_y = layout.chat_top + 20
     _clear_clipboard()
-
     auto.Click(layout.chat_mid_x, header_y)
     time.sleep(0.3)
-
-    # Thử đọc từ DocumentControl (accessibility)
     try:
         desktop = auto.GetRootControl()
         doc = desktop.DocumentControl(ClassName="Chrome_RenderWidgetHostHWND",
@@ -201,8 +208,58 @@ def _get_contact_name_from_chat_header(layout: ZaloLayout) -> str:
             return doc.Name.strip()
     except Exception:
         pass
-
     return ""
+
+
+# ─────────────────────────────────────────────
+#  TÌM KIẬM CONTACT THEO TÊN
+# ─────────────────────────────────────────────
+
+def _search_contact(layout: ZaloLayout, name: str, result_wait: float = 2.5) -> bool:
+    """
+    Gõ tên vào ô tìm kiếm Zalo, chờ kết quả xuất hiện và click vào kết quả đầu tiên.
+    Trả về True nếu thành công (click xong và chat được mở).
+
+    Zalo PC search box: Ctrl+F hoặc click vào ô search trên sidebar.
+    """
+    log.info("[SEARCH] Tìm kiếm: '%s'", name)
+
+    # Phương pháp 1: Dùng Ctrl+F (mở search trên Zalo)
+    # Phương pháp 2: Click trực tiếp vào ô search sidebar
+    # Zalo PC (2024+): Click vào search bar ở sidebar header
+
+    try:
+        # Cách 1: Được click vào search box (viến tiên)
+        auto.Click(layout.search_x, layout.search_y)
+        time.sleep(0.5)
+
+        # Xóa nội dung cũ trong ô search
+        auto.SendKeys("{Ctrl}a")
+        time.sleep(0.1)
+        auto.SendKeys("{Delete}")
+        time.sleep(0.1)
+
+        # Gõ tên  cần tìm
+        import pyperclip
+        pyperclip.copy(name)           # copy tên vào clipboard
+        auto.SendKeys("{Ctrl}v")        # paste → tránh lỗi unicode khi type bằng SendKeys
+        time.sleep(result_wait)        # chờ Zalo tìm kiếm
+
+        # Click vào kết quả đầu tiên trong danh sách search result
+        auto.Click(layout.search_result_x, layout.search_result_y)
+        time.sleep(CLICK_PAUSE)        # chờ chat panel load
+
+        # Thoát khỏi search mode bằng Esc (tiêu đề chat panel sẽ hiển thị đúng)
+        auto.SendKeys("{Escape}")
+        time.sleep(0.3)
+
+        log.info("[SEARCH] ✅ Đã click vào kết quả của '%s'", name)
+        return True
+
+    except Exception as e:
+        log.error("[SEARCH] ❌ Lỗi khi tìm '%s': %s", name, e)
+        return False
+
 
 
 def _scroll_chat_to_top(layout: ZaloLayout,
@@ -510,8 +567,109 @@ def _scroll_sidebar(layout: ZaloLayout, times: int = 3):
         log.warning("[SCROLL] Lỗi WheelDown: %s", e)
 
 
+
 # ─────────────────────────────────────────────
-#  HÀM CHÍNH
+#  CÀO THEO DANH SÁCH TÊN (MODE 2)
+# ─────────────────────────────────────────────
+
+def scrape_by_name_list(name_list: list[str]) -> None:
+    """
+    Mode 2: Cào theo danh sách tên cụ thể (lấy từ ZCA-js hoặc nhập tay).
+
+    Ưu điểm so với mode sidebar:
+    - Biết chính xác tên khách hàng trước khi parse → phân loại USER/BOT chuẩn 100%
+    - Không bị trùng lặp, không bỏ sót
+    - Tìm đúng người cần cào
+
+    Luồng mỗi contact:
+    1. Gõ tên vào ô search Zalo → click kết quả đầu tiên
+    2. Cuộn lên đầu lịch sử (load đầy đủ)
+    3. Ctrl+A, Ctrl+C → lấy toàn bộ text
+    4. Parse với customer_name = tên đã biết → USER/BOT chính xác
+    5. Lưu local (không push CRM, chờ review)
+    """
+    if not name_list:
+        log.warning("[LIST] Danh sách rỗng — dừng.")
+        return
+
+    log.info("═" * 60)
+    log.info("  ZALO SCRAPER — MODE DANH SÁCH (%d người)", len(name_list))
+    log.info("═" * 60)
+
+    # ── Tìm Zalo window ──
+    zalo_win = _get_zalo_window()
+    if not zalo_win:
+        return
+
+    try:
+        zalo_win.SetFocus()
+    except Exception:
+        pass
+    time.sleep(0.8)
+
+    layout = ZaloLayout(zalo_win)
+    layout.log_layout()
+
+    total_ok    = 0
+    total_fail  = 0
+
+    for idx, customer_name in enumerate(name_list, 1):
+        customer_name = customer_name.strip()
+        if not customer_name:
+            continue
+
+        log.info("─" * 50)
+        log.info("[LIST] (%d/%d) Đang cào: '%s'", idx, len(name_list), customer_name)
+
+        # ── Tìm kiếm contact ──
+        found = _search_contact(layout, customer_name)
+        if not found:
+            log.error("[LIST] ❌ Không thể mở chat với '%s' — bỏ qua.", customer_name)
+            total_fail += 1
+            continue
+
+        # ── Đọc chat ──
+        raw_texts = _get_chat_texts_from_accessibility(layout)
+        if not raw_texts:
+            log.info("[READ] Accessibility rỗng → thử clipboard…")
+            clip_text = _copy_chat_content(layout)
+            if clip_text:
+                raw_texts = [clip_text]
+        else:
+            log.info("[READ] Đọc được %d phần tử text từ accessibility.", len(raw_texts))
+
+        if not raw_texts:
+            log.warning("[LIST] Không đọc được nội dung chat của '%s'.", customer_name)
+            total_fail += 1
+            continue
+
+        # ── Parse với customer_name ĐÃ BIẾT → 100% chính xác ──
+        parsed_logs, account_senders = parse_zalo_texts(raw_texts, customer_name)
+
+        user_cnt = sum(1 for m in parsed_logs if m.get("role") == "USER")
+        bot_cnt  = len(parsed_logs) - user_cnt
+        log.info("[PARSE] Parse được %d tin nhắn — Khách: '%s' | BOT: %s",
+                 len(parsed_logs), customer_name,
+                 ", ".join(account_senders) or "(Bạn)")
+
+        # ── Lưu local ──
+        save_local(customer_name, parsed_logs, account_senders)
+
+        total_ok += 1
+        log.info("[LIST] Tiến độ: %d/%d ✅ xong '%s'",
+                 idx, len(name_list), customer_name)
+
+        # Dừng nhẹ giữa các contact
+        time.sleep(1.0)
+
+    log.info("═" * 60)
+    log.info("  HOÀN TẤT! Thành công: %d, Thất bại: %d / %d",
+             total_ok, total_fail, len(name_list))
+    log.info("═" * 60)
+
+
+# ─────────────────────────────────────────────
+#  HÀM CHÍNH (Mode 1 — Sidebar)
 # ─────────────────────────────────────────────
 
 def main_scraper(limit: int = 100):
@@ -674,8 +832,24 @@ def main_scraper(limit: int = 100):
 # ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import os
-    limit = int(os.environ.get("SCRAPER_LIMIT", 100))
+    import os, json as _json
+
+    mode       = os.environ.get("SCRAPER_MODE", "sidebar")
     API_ENDPOINT = os.environ.get("SCRAPER_API_URL", API_ENDPOINT)
     API_SECRET   = os.environ.get("SCRAPER_SECRET",  API_SECRET)
-    main_scraper(limit=limit)
+
+    if mode == "list":
+        # ── Mode 2: Cào theo danh sách tên ──
+        list_file = os.environ.get("SCRAPER_LIST_FILE", "scraper_name_list.json")
+        try:
+            with open(list_file, encoding="utf-8") as f:
+                name_list = _json.load(f)
+            log.info("[ENTRY] MODE=list — %d tên từ %s", len(name_list), list_file)
+            scrape_by_name_list(name_list)
+        except Exception as e:
+            log.error("[ENTRY] ❌ Không đọc được danh sách: %s", e)
+    else:
+        # ── Mode 1: Cào sidebar (giới hạn số lượng) ──
+        limit = int(os.environ.get("SCRAPER_LIMIT", 100))
+        log.info("[ENTRY] MODE=sidebar — limit=%d", limit)
+        main_scraper(limit=limit)

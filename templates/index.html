@@ -616,6 +616,18 @@
     .chip-rejected { background: rgba(252,129,129,0.12); color: var(--danger); }
     .chip-synced   { background: rgba(99,179,237,0.12);  color: var(--accent); }
 
+    .mode-btn {
+      flex:1; padding:7px 10px; border-radius:8px; font-size:12px; font-weight:600;
+      cursor:pointer; border:1px solid var(--border); background:none;
+      color:var(--text-secondary); font-family:var(--font-sans);
+      display:flex;align-items:center;justify-content:center;gap:6px;
+      transition:all .2s;
+    }
+    .mode-btn:hover { border-color:var(--border-glow); color:var(--text-primary); }
+    .mode-btn.active {
+      background:rgba(99,179,237,0.15); border-color:var(--accent); color:var(--accent);
+    }
+
     /* Bulk select */
     .bulk-bar {
       display: flex; align-items: center; justify-content: space-between;
@@ -792,6 +804,51 @@
           </div>
 
           <div class="divider"></div>
+
+          <!-- Mode: Sidebar vs Danh sách -->
+          <div class="form-group">
+            <label class="form-label">Chế độ cào</label>
+            <div style="display:flex;gap:6px">
+              <button id="modeBtnSidebar" class="mode-btn active" onclick="setMode('sidebar')">
+                <i class="fa-solid fa-list"></i> Sidebar
+              </button>
+              <button id="modeBtnList" class="mode-btn" onclick="setMode('list')">
+                <i class="fa-solid fa-address-book"></i> Danh sách tên
+              </button>
+            </div>
+          </div>
+
+          <!-- Panel: Danh sách tên (ẩn khi mode=sidebar) -->
+          <div id="nameListPanel" style="display:none">
+            <div class="form-group">
+              <label class="form-label" style="display:flex;justify-content:space-between">
+                <span>Danh sách tên khách hàng</span>
+                <span id="nameListCount" style="color:var(--accent);font-size:11px;font-weight:600">0 người</span>
+              </label>
+              <textarea id="cfgNameList" placeholder="Nhập mỗi tên một dòng, hoặc dán JSON array...
+Ví dụ:
+Nguyễn Thị Hoa
+Trần Văn Bình
+Lê Minh Tuấn"
+                style="width:100%;min-height:130px;resize:vertical;
+                       background:var(--bg-input);border:1px solid var(--border);
+                       border-radius:8px;color:var(--text-primary);padding:10px 12px;
+                       font-family:var(--font-sans);font-size:13px;line-height:1.5;
+                       outline:none;transition:border-color .2s;box-sizing:border-box"
+                oninput="updateNameListCount()"
+                onfocus="this.style.borderColor='var(--accent)'"
+                onblur="this.style.borderColor='var(--border)'"></textarea>
+              <div style="display:flex;gap:6px;margin-top:6px">
+                <button class="btn-sm btn-cfg" onclick="clearNameList()" style="font-size:11px;padding:4px 10px">
+                  <i class="fa-solid fa-trash"></i> Xóa
+                </button>
+                <button class="btn-sm btn-cfg" onclick="importFromJson()" style="font-size:11px;padding:4px 10px">
+                  <i class="fa-solid fa-code"></i> Import JSON
+                </button>
+              </div>
+            </div>
+          </div>
+
 
           <!-- Progress Ring + Elapsed -->
           <div class="progress-ring-wrap">
@@ -1325,27 +1382,96 @@
   }
 
   /* ══════════════════════════════════════
+     SCRAPE MODE
+  ══════════════════════════════════════ */
+  let scrapeMode = 'sidebar';  // 'sidebar' | 'list'
+
+  function setMode(mode) {
+    scrapeMode = mode;
+    document.getElementById('modeBtnSidebar').classList.toggle('active', mode === 'sidebar');
+    document.getElementById('modeBtnList').classList.toggle('active', mode === 'list');
+    document.getElementById('nameListPanel').style.display = mode === 'list' ? 'block' : 'none';
+    // Ẩn/hiện limit input khi ở mode list (không cần limit)
+    const limitRow = document.getElementById('cfgLimit').closest('.form-group');
+    if (limitRow) limitRow.style.display = mode === 'list' ? 'none' : '';
+  }
+
+  function updateNameListCount() {
+    const names = parseNameList();
+    document.getElementById('nameListCount').textContent = `${names.length} người`;
+  }
+
+  function parseNameList() {
+    const raw = document.getElementById('cfgNameList').value.trim();
+    if (!raw) return [];
+    // Thử parse JSON array
+    if (raw.startsWith('[')) {
+      try {
+        const arr = JSON.parse(raw);
+        return arr.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim());
+      } catch(_) {}
+    }
+    // Fallback: mỗi dòng là một tên
+    return raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  }
+
+  function clearNameList() {
+    document.getElementById('cfgNameList').value = '';
+    updateNameListCount();
+  }
+
+  function importFromJson() {
+    const raw = prompt('Dán JSON array tên khách hàng từ ZCA-js:\n(vd: ["Nguyễn Thị A", "Trần B"])');
+    if (!raw) return;
+    try {
+      const arr = JSON.parse(raw);
+      document.getElementById('cfgNameList').value = arr.join('\n');
+      updateNameListCount();
+    } catch(_) {
+      alert('JSON không hợp lệ. Hãy kiểm tra lại.');
+    }
+  }
+
+  /* ══════════════════════════════════════
      START / STOP
   ══════════════════════════════════════ */
   async function startScraper() {
     const btn = document.getElementById('btnStart');
     btn.classList.add('loading');
 
-    const isUnlimited = document.getElementById('cfgUnlimited').checked;
-    const config = {
-      limit:       isUnlimited ? 999999 : (parseInt(document.getElementById('cfgLimit').value) || 100),
-      apiEndpoint: document.getElementById('cfgEndpoint').value.trim(),
-      apiSecret:   document.getElementById('cfgSecret').value.trim(),
-    };
-    scrapeLimit = config.limit;
-
+    let res, d;
     try {
-      const res = await fetch('/api/start', {
-        method:  'POST',
-        headers: {'Content-Type':'application/json'},
-        body:    JSON.stringify(config),
-      });
-      const d = await res.json();
+      if (scrapeMode === 'list') {
+        // ── Mode: Danh sách tên ──
+        const names = parseNameList();
+        if (!names.length) {
+          btn.classList.remove('loading');
+          alert('⚠️ Danh sách tên trống! Nhập ít nhất 1 tên.');
+          return;
+        }
+        scrapeLimit = names.length;
+        res = await fetch('/api/start-by-list', {
+          method:  'POST',
+          headers: {'Content-Type':'application/json'},
+          body:    JSON.stringify({ names }),
+        });
+      } else {
+        // ── Mode: Sidebar ──
+        const isUnlimited = document.getElementById('cfgUnlimited').checked;
+        const config = {
+          limit:       isUnlimited ? 999999 : (parseInt(document.getElementById('cfgLimit').value) || 100),
+          apiEndpoint: document.getElementById('cfgEndpoint').value.trim(),
+          apiSecret:   document.getElementById('cfgSecret').value.trim(),
+        };
+        scrapeLimit = config.limit;
+        res = await fetch('/api/start', {
+          method:  'POST',
+          headers: {'Content-Type':'application/json'},
+          body:    JSON.stringify(config),
+        });
+      }
+
+      d = await res.json();
       if (d.ok) {
         setRunningUI(true);
         startElapsedTimer();
@@ -1369,6 +1495,7 @@
       stopElapsedTimer();
     } catch(e) { alert('Lỗi khi dừng.'); }
   }
+
 
   /* ══════════════════════════════════════
      INIT

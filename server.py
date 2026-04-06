@@ -367,6 +367,105 @@ def api_start():
     return jsonify({"ok": True, "message": "Scraper đã được khởi động."})
 
 
+@app.route("/api/start-by-list", methods=["POST"])
+def api_start_by_list():
+    """
+    Khởi động scraper theo danh sách tên khách hàng (từ ZCA-js hoặc nhập tay).
+    Payload: { names: ["Nguyễn Thị A", "Trần Văn B", ...] }
+    """
+    if STATE.is_running:
+        return jsonify({"ok": False, "error": "Scraper đang chạy rồi!"}), 400
+
+    body  = request.get_json(silent=True) or {}
+    names = body.get("names", [])
+
+    # Chuẩn hóa: loại bỏ dòng trống, strip whitespace
+    names = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+
+    if not names:
+        return jsonify({"ok": False, "error": "Danh sách tên trống"}), 400
+
+    STATE.log_history.clear()
+    # Lưu danh sách vào file tạm để subprocess đọc
+    name_list_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "scraper_name_list.json"
+    )
+    with open(name_list_file, "w", encoding="utf-8") as f:
+        json.dump(names, f, ensure_ascii=False, indent=2)
+
+    t = threading.Thread(
+        target=_run_scraper_by_list,
+        args=(names,),
+        daemon=True
+    )
+    STATE.thread = t
+    t.start()
+    return jsonify({
+        "ok": True,
+        "message": f"Đang cào {len(names)} người theo danh sách.",
+        "count": len(names),
+        "names": names,
+    })
+
+
+def _run_scraper_by_list(names: list):
+    """Chạy zalo_scraper.py ở mode danh sách trong subprocess."""
+    STATE.reset_stats()
+    STATE.is_running = True
+    STATE.push_log("INFO", f"📋 Mode DANH SÁCH — {len(names)} người")
+    for i, n in enumerate(names[:10], 1):
+        STATE.push_log("INFO", f"  {i}. {n}")
+    if len(names) > 10:
+        STATE.push_log("INFO", f"  ... và {len(names)-10} người khác")
+
+    name_list_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "scraper_name_list.json"
+    )
+    try:
+        sub_env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8":       "1",
+            "SCRAPER_MODE":     "list",
+            "SCRAPER_LIST_FILE": name_list_file,
+        }
+        proc = subprocess.Popen(
+            [sys.executable, "-u", "zalo_scraper.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=False, bufsize=0,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            env=sub_env,
+        )
+        STATE.process = proc
+
+        for raw_line in proc.stdout:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line:
+                continue
+            _parse_log_line(line)
+            level = "INFO"
+            if "ERROR" in line or "❌" in line:
+                level = "ERROR"
+            elif "WARNING" in line or "⚠" in line:
+                level = "WARNING"
+            elif "✅" in line or "Thành công" in line or "HOÀN TẤT" in line:
+                level = "SUCCESS"
+            STATE.push_log(level, line)
+
+        proc.wait()
+        exit_code = proc.returncode
+        STATE.push_log("INFO" if exit_code == 0 else "ERROR",
+                       f"Process kết thúc (exit code: {exit_code})")
+
+    except Exception as e:
+        STATE.push_log("ERROR", f"❌ Lỗi: {e}")
+    finally:
+        STATE.is_running = False
+        STATE.process    = None
+        STATE.push_log("SUCCESS", "✅ Scraper đã dừng.")
+
+
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     if not STATE.is_running:

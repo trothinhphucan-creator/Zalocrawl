@@ -1638,9 +1638,8 @@ Lê Minh Tuấn"
         // ── Mode: Sidebar ──
         const isUnlimited = document.getElementById('cfgUnlimited').checked;
         const config = {
-          limit:       isUnlimited ? 999999 : (parseInt(document.getElementById('cfgLimit').value) || 100),
-          apiEndpoint: document.getElementById('cfgEndpoint').value.trim(),
-          apiSecret:   document.getElementById('cfgSecret').value.trim(),
+          limit: isUnlimited ? 999999 : (parseInt(document.getElementById('cfgLimit').value) || 100),
+          // scraper luôn lưu local — không cần apiEndpoint/apiSecret từ UI
         };
         scrapeLimit = config.limit;
         res = await fetch('/api/start', {

@@ -30,8 +30,23 @@ if hasattr(sys.stderr, "reconfigure"):
 # (Vào dashboard duyệt rồi mới sync AgentSee)
 LOCAL_SERVER    = "http://localhost:5000"
 API_ENDPOINT    = f"{LOCAL_SERVER}/api/conversations/ingest"
-API_SECRET      = "antigravity_secret_2026"
+# Secret: ưu tiên env var ZALOCRAWL_SECRET, fallback default
+import os as _os
+API_SECRET      = _os.environ.get("ZALOCRAWL_SECRET", "antigravity_secret_2026")
 REQUEST_TIMEOUT = 10
+
+# Search Y Offset — vị trí ô tìm kiếm tính từ đỉnh window Zalo (px)
+# Có thể chỉnh qua Dashboard → Cấu hình → "Search Y Offset"
+SEARCH_Y_OFFSET_DEFAULT = 110
+
+def _load_search_y_offset() -> int:
+    """Đọc search_y_offset từ server config (do người dùng calibrate trong dashboard)."""
+    try:
+        import requests as _req
+        r = _req.get(f"{LOCAL_SERVER}/api/config/search-offset", timeout=2)
+        return r.json().get("search_y_offset", SEARCH_Y_OFFSET_DEFAULT)
+    except Exception:
+        return SEARCH_Y_OFFSET_DEFAULT
 
 # Khoảng thời gian chờ (giây)
 CLICK_PAUSE      = 2.5   # chờ sau khi click contact để Zalo load chat
@@ -46,7 +61,7 @@ HISTORY_LOAD_WAIT   = 1.5  # giây chờ Zalo render sau mỗi lần cuộn
 # Sidebar layout (tự động tính từ Zalo window rect)
 SIDEBAR_WIDTH_RATIO = 0.32   # sidebar chiếm ~32% chiều rộng cửa sổ
 CONTACT_HEIGHT_PX   = 72     # chiều cao mỗi contact item ~72px
-HEADER_HEIGHT_PX    = 220    # header Zalo: title(30) + nav(50) + account(40) + search(50) + tab(30) + margin(20)
+HEADER_HEIGHT_PX    = 220    # header: title(30)+nav(50)+account(40)+search(50)+tab(30)+margin(20)
 CONTACT_X_OFFSET    = 0.5   # click vào giữa chiều ngang sidebar
 
 # ─────────────────────────────────────────────
@@ -151,13 +166,15 @@ class ZaloLayout:
         self.sidebar_mid_x  = (self.sidebar_left + self.sidebar_right) // 2
 
         # Ô tìm kiếm Zalo: nằm trên header sidebar
-        # Zalo PC: search box ở y ≈ win_top + 110px, x = giữa sidebar
-        self.search_x = self.sidebar_mid_x
-        self.search_y = r.top + 110   # có thể cần cận chỉnh theo Zalo version
+        # Offset calibrate được từ dashboard (mặc định 110px)
+        _search_y_off       = _load_search_y_offset()
+        self.search_x       = self.sidebar_mid_x
+        self.search_y       = r.top + _search_y_off
 
-        # Kết quả tìm kiếm: item đầu tiên ≈ win_top + 190px
+        # Kết quả tìm kiếm: item đầu tiên nằm ngay dưới search box
         self.search_result_x = self.sidebar_mid_x
-        self.search_result_y = r.top + 190
+        self.search_result_y = r.top + _search_y_off + 44 + CONTACT_HEIGHT_PX // 2
+
 
         # Chat panel: phần còn lại
         self.chat_left   = self.sidebar_right
@@ -642,10 +659,27 @@ def scrape_by_name_list(name_list: list[str]) -> None:
         log.info("─" * 50)
         log.info("[LIST] (%d/%d) Đang cào: '%s'", idx, len(name_list), customer_name)
 
-        # ── Tìm kiếm contact ──
-        found = _search_contact(layout, customer_name)
+        # ── Tìm kiếm contact — retry tối đa 2 lần ──
+        max_retries = 2
+        found = False
+        for attempt in range(1, max_retries + 1):
+            found = _search_contact(layout, customer_name)
+            if found:
+                break
+            if attempt < max_retries:
+                log.warning("[LIST] [↺ Retry %d/%d] Thử lại '%s'...",
+                            attempt, max_retries, customer_name)
+                time.sleep(2.0)
+                # Re-focus Zalo trước khi thử lại
+                try:
+                    zalo_win.SetFocus()
+                    time.sleep(0.5)
+                except Exception:
+                    pass
+
         if not found:
-            log.error("[LIST] ❌ Không thể mở chat với '%s' — bỏ qua.", customer_name)
+            log.error("[LIST] ❌ Không thể mở chat với '%s' sau %d lần thử — bỏ qua.",
+                      customer_name, max_retries)
             total_fail += 1
             continue
 
@@ -816,10 +850,24 @@ def main_scraper(limit: int = 100):
                      len(parsed_logs), contact_name,
                      ", ".join(account_senders) or "(Bạn)")
 
+            # ── Dedup theo TÊN THẬT (sau khi detect) ───────────────
+            # Cả 2 dedup: positional key (dedup slot) + tên thật (dedup person)
+            name_key = contact_name.strip().lower()
+            if name_key in scraped_names or name_key.startswith("khách_"):
+                # Đã cào người này rồi (hoặc không detect được tên)
+                if name_key in scraped_names:
+                    log.info("[DEDUP] Bỏ qua '%s' — đã cào rồi.", contact_name)
+                    continue
+
+            log.info("[PARSE] Parse được %d tin nhắn — Khách: '%s' | BOT: %s",
+                     len(parsed_logs), contact_name,
+                     ", ".join(account_senders) or "(Bạn)")
+
             # ── Push ──
             push_to_server(contact_name, parsed_logs, account_senders)
 
-            scraped_names.add(dedup_key)   # đánh dấu theo positional key
+            scraped_names.add(dedup_key)   # positional key
+            scraped_names.add(name_key)    # name-based key (chống trùng thật)
             total_scraped += 1
             found_new_in_pass = True
             limit_str = "∞" if limit >= 999999 else str(limit)

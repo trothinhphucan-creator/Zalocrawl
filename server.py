@@ -26,6 +26,21 @@ CORS(app)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "zalocrawl.db")
 
+# Secret dùng để xác thực giữa scraper và server
+# Ƭu tiên: env var ZALOCRAWL_SECRET > runtime_config.json > default
+_cfg_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_config.json")
+def _load_secret() -> str:
+    env_val = os.environ.get("ZALOCRAWL_SECRET", "")
+    if env_val:
+        return env_val
+    try:
+        with open(_cfg_file, encoding="utf-8") as f:
+            return json.load(f).get("api_secret", "antigravity_secret_2026")
+    except Exception:
+        return "antigravity_secret_2026"
+
+INGEST_SECRET = _load_secret()
+
 # ──────────────────────────────────────────────
 #  DATABASE — SQLite
 # ──────────────────────────────────────────────
@@ -51,7 +66,11 @@ def init_db():
         try:
             conn.execute("ALTER TABLE conversations ADD COLUMN zalo_uid  TEXT DEFAULT NULL")
         except Exception:
-            pass  # cột đã tồn tại
+            pass
+        try:
+            conn.execute("ALTER TABLE conversations ADD COLUMN zalo_name TEXT DEFAULT NULL")
+        except Exception:
+            pass
         try:
             conn.execute("ALTER TABLE conversations ADD COLUMN bot_msgs       TEXT DEFAULT '[]'")
         except Exception:
@@ -269,7 +288,7 @@ def _parse_log_line(line: str):
 def _run_scraper_process(config: dict):
     limit   = config.get("limit", 100)
     api_url = config.get("apiEndpoint", "http://localhost:3000/api/crm/import-chats")
-    secret  = config.get("apiSecret",   "antigravity_secret_2026")
+    secret  = config.get("apiSecret", INGEST_SECRET)
 
     STATE.reset_stats()
     STATE.is_running = True
@@ -466,6 +485,30 @@ def _run_scraper_by_list(names: list):
         STATE.push_log("SUCCESS", "✅ Scraper đã dừng.")
 
 
+@app.route("/api/config/search-offset", methods=["GET", "POST"])
+def api_config_search_offset():
+    """
+    GET  → trả về search_y_offset hiện tại
+    POST → lưu search_y_offset vào sync_config
+    """
+    if request.method == "GET":
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT value FROM sync_config WHERE key='search_y_offset'"
+            ).fetchone()
+        return jsonify({"search_y_offset": int(row["value"]) if row else 110})
+    else:
+        body = request.get_json(silent=True) or {}
+        offset = int(body.get("search_y_offset", 110))
+        offset = max(50, min(offset, 300))
+        with _get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO sync_config (key, value) VALUES ('search_y_offset', ?)",
+                (str(offset),)
+            )
+        return jsonify({"ok": True, "search_y_offset": offset})
+
+
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     if not STATE.is_running:
@@ -522,8 +565,8 @@ def api_ingest():
     """
     body = request.get_json(silent=True) or {}
 
-    # Basic auth bằng secret
-    if body.get("secret") != "antigravity_secret_2026":
+    # Basic auth bằng secret (load từ env var hoặc runtime_config.json)
+    if body.get("secret") != INGEST_SECRET:
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
 
     customer      = (body.get("customerName") or "").strip()

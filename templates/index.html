@@ -800,17 +800,38 @@
         </div>
         <div class="card-body">
 
-          <div class="form-group">
-            <label class="form-label">API Endpoint</label>
-            <input class="form-input form-input-mono" id="cfgEndpoint"
-                   value="http://localhost:3000/api/crm/import-chats"
-                   placeholder="http://localhost:3000/..." />
+
+          <!-- Ghi chú: scraper luôn lưu local (không push CRM trực tiếp) -->
+          <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                      background:rgba(104,211,145,0.06);border:1px solid rgba(104,211,145,0.2);
+                      border-radius:8px;font-size:11.5px;color:var(--success);margin-bottom:4px">
+            <i class="fa-solid fa-shield-check"></i>
+            <span>Scraper lưu <strong>local SQLite</strong> — không push CRM trực tiếp</span>
           </div>
 
           <div class="form-group">
-            <label class="form-label">Secret Key</label>
-            <input class="form-input form-input-mono" id="cfgSecret"
-                   type="password" value="antigravity_secret_2026" />
+            <label class="form-label" style="display:flex;justify-content:space-between">
+              <span>Search Y Offset (calibrate)</span>
+              <span style="color:var(--text-muted);font-size:10px;font-weight:400">
+                👆 Chỉnh nếu click sai ô search
+              </span>
+            </label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="number" id="cfgSearchYOffset" value="110" min="50" max="300" step="5"
+                     style="width:80px;background:var(--bg-input);border:1px solid var(--border);
+                            border-radius:8px;color:var(--text-primary);padding:6px 10px;
+                            font-family:var(--font-mono);font-size:13px;font-weight:600;
+                            outline:none;transition:border-color .2s"
+                     onfocus="this.style.borderColor='var(--accent)'"
+                     onblur="this.style.borderColor='var(--border)'" />
+              <span style="font-size:11px;color:var(--text-muted)">px từ đầu window</span>
+              <button class="btn-sm btn-cfg" onclick="saveSearchOffset()" style="font-size:11px;padding:5px 10px">
+                <i class="fa-solid fa-floppy-disk"></i> Lưu
+              </button>
+            </div>
+            <div style="font-size:10.5px;color:var(--text-muted);margin-top:4px">
+              Chạy <code>python debug_search_coords.py</code> để kiểm tra tọa độ
+            </div>
           </div>
 
           <div class="form-group">

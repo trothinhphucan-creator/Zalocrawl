@@ -217,43 +217,64 @@ def _get_contact_name_from_chat_header(layout: ZaloLayout) -> str:
 
 def _search_contact(layout: ZaloLayout, name: str, result_wait: float = 2.5) -> bool:
     """
-    Gõ tên vào ô tìm kiếm Zalo, chờ kết quả xuất hiện và click vào kết quả đầu tiên.
-    Trả về True nếu thành công (click xong và chat được mở).
+    Dùng Ctrl+F của Zalo để mở ô tìm kiếm, rồi gõ tên và click kết quả đầu tiên.
 
-    Zalo PC search box: Ctrl+F hoặc click vào ô search trên sidebar.
+    Chiến lược:
+    1. Click vào PHẦN TRÊN CÙNG của sidebar (không phải ô chat) để đảm bảo Zalo được focus
+    2. Nhấn Ctrl+F → Zalo mở ô search và focus vào đó
+    3. Paste tên → chờ kết quả → click kết quả đầu tiên
+    4. Nhấn Escape để đóng search mode (chat vẫn mở)
+
+    KHÔNG dùng tọa độ cứng cho ô search vì dễ nhầm sang ô nhắn tin.
     """
+    import pyperclip
+
     log.info("[SEARCH] Tìm kiếm: '%s'", name)
 
-    # Phương pháp 1: Dùng Ctrl+F (mở search trên Zalo)
-    # Phương pháp 2: Click trực tiếp vào ô search sidebar
-    # Zalo PC (2024+): Click vào search bar ở sidebar header
-
     try:
-        # Cách 1: Được click vào search box (viến tiên)
-        auto.Click(layout.search_x, layout.search_y)
-        time.sleep(0.5)
+        # ── Bước 1: Click vào thanh tiêu đề sidebar  ──────────────────────
+        # Điểm click: phần header của sidebar, cách top khoảng 70px
+        # (Đây là vùng LOGO / icon account — KHÔNG phải ô nhắn tin)
+        safe_click_y = layout.win_top + 40  # vùng thanh tiêu đề window Zalo
+        safe_click_x = layout.sidebar_mid_x
 
-        # Xóa nội dung cũ trong ô search
+        log.debug("[SEARCH] Click header sidebar tại (%d, %d) để focus Zalo",
+                  safe_click_x, safe_click_y)
+        auto.Click(safe_click_x, safe_click_y)
+        time.sleep(0.4)
+
+        # ── Bước 2: Mở ô search bằng Ctrl+F ──────────────────────────────
+        # Zalo PC hỗ trợ Ctrl+F để focus vào search box phía trên contact list
+        auto.SendKeys("{Ctrl}f")
+        time.sleep(0.8)   # chờ animation search box xuất hiện
+
+        # ── Bước 3: Xóa nội dung cũ (nếu có) rồi paste tên ───────────────
         auto.SendKeys("{Ctrl}a")
         time.sleep(0.1)
         auto.SendKeys("{Delete}")
         time.sleep(0.1)
 
-        # Gõ tên  cần tìm
-        import pyperclip
-        pyperclip.copy(name)           # copy tên vào clipboard
-        auto.SendKeys("{Ctrl}v")        # paste → tránh lỗi unicode khi type bằng SendKeys
-        time.sleep(result_wait)        # chờ Zalo tìm kiếm
+        pyperclip.copy(name)
+        auto.SendKeys("{Ctrl}v")
+        log.info("[SEARCH] Đã paste tên '%s' vào ô search", name)
+        time.sleep(result_wait)   # chờ Zalo render kết quả
 
-        # Click vào kết quả đầu tiên trong danh sách search result
-        auto.Click(layout.search_result_x, layout.search_result_y)
-        time.sleep(CLICK_PAUSE)        # chờ chat panel load
+        # ── Bước 4: Kết quả đầu tiên nằm ngay dưới search box ────────────
+        # Sau khi search, contact list thu gọn và item đầu tiên hiện ra
+        # Y của kết quả 1 = search_y + chiều cao search box (~44px) + CONTACT_HEIGHT_PX/2
+        first_result_y = layout.search_y + 44 + CONTACT_HEIGHT_PX // 2
+        first_result_x = layout.sidebar_mid_x
 
-        # Thoát khỏi search mode bằng Esc (tiêu đề chat panel sẽ hiển thị đúng)
+        log.debug("[SEARCH] Click kết quả đầu tiên tại (%d, %d)",
+                  first_result_x, first_result_y)
+        auto.Click(first_result_x, first_result_y)
+        time.sleep(CLICK_PAUSE)   # chờ chat panel load
+
+        # ── Bước 5: Thoát search mode ─────────────────────────────────────
         auto.SendKeys("{Escape}")
-        time.sleep(0.3)
+        time.sleep(0.4)
 
-        log.info("[SEARCH] ✅ Đã click vào kết quả của '%s'", name)
+        log.info("[SEARCH] ✅ Đã mở chat với '%s'", name)
         return True
 
     except Exception as e:

@@ -208,24 +208,68 @@ class ZaloLayout:
 #  ĐỌC TÊN CONTACT & CHAT QUA CLIPBOARD
 # ─────────────────────────────────────────────
 
-def _get_contact_name_from_chat_header(layout: ZaloLayout) -> str:
+def _get_name_from_avatar_popup(layout: ZaloLayout, fallback: str = "") -> str:
     """
-    Đọc tên contact hiện tại từ header khung chat (dòng đầu tiên).
-    Chiến thuật: click vào header chat → select all → copy.
+    Lấy tên khách hàng bằng cách click vào ảnh đại diện trong chat header.
+
+    Quy trình:
+    1. Click vào avatar (góc trái trên của chat panel)
+    2. Zalo mở popup/card thông tin liên hệ
+    3. Thử đọc tên qua clipboard (click name text → Ctrl+C)
+    4. Đóng popup bằng Escape
+    Trả về tên tìm được hoặc fallback nếu không đọc được.
     """
-    header_y = layout.chat_top + 20
-    _clear_clipboard()
-    auto.Click(layout.chat_mid_x, header_y)
-    time.sleep(0.3)
     try:
-        desktop = auto.GetRootControl()
-        doc = desktop.DocumentControl(ClassName="Chrome_RenderWidgetHostHWND",
-                                      searchDepth=5)
-        if doc.Exists(maxSearchSeconds=1) and doc.Name:
-            return doc.Name.strip()
-    except Exception:
-        pass
-    return ""
+        # ── Tọa độ avatar trong chat header ──────────────────────────────
+        # Zalo PC: avatar nằm ở góc trái trên của chat panel header
+        # Thường tại (chat_left + 20, chat_top + 28) — avatar 40×40px
+        avatar_x = layout.chat_left + 20
+        avatar_y = layout.chat_top + 28
+
+        log.debug("[AVATAR] Click avatar tại (%d, %d)", avatar_x, avatar_y)
+        _clear_clipboard()
+        auto.Click(avatar_x, avatar_y)
+        time.sleep(1.2)   # chờ popup animation
+
+        # ── Thử đọc tên từ popup ─────────────────────────────────────────
+        # Popup thường hiện ra ở giữa màn hình hoặc sát chat panel
+        # Tên thường ở vị trí trung tâm-trên của popup (~200px từ center)
+        # Chiến lược: click vào vùng tên, Ctrl+A, Ctrl+C
+        popup_center_x = layout.chat_left + (layout.chat_right - layout.chat_left) // 4
+        popup_name_y   = layout.chat_top + 120   # vùng tên trong popup info
+
+        auto.Click(popup_center_x, popup_name_y)
+        time.sleep(0.3)
+        auto.SendKeys("{Ctrl}a")
+        time.sleep(0.2)
+        auto.SendKeys("{Ctrl}c")
+        time.sleep(0.4)
+
+        raw = _read_clipboard().strip()
+        # Lọc: tên thường là 1 dòng, ≤ 60 ký tự, không chứa URL
+        lines = [l.strip() for l in raw.split("\n") if l.strip()]
+        candidate = lines[0] if lines else ""
+        if 0 < len(candidate) <= 60 and "http" not in candidate:
+            log.info("[AVATAR] ✅ Đọc được tên: '%s'", candidate)
+            name = candidate
+        else:
+            log.warning("[AVATAR] Clipboard không hợp lệ ('%s') → dùng fallback",
+                        candidate[:40] if candidate else "(rỗng)")
+            name = fallback
+
+    except Exception as e:
+        log.warning("[AVATAR] Lỗi khi đọc popup: %s", e)
+        name = fallback
+
+    finally:
+        # ── Đóng popup bằng Escape ────────────────────────────────────────
+        try:
+            auto.SendKeys("{Escape}")
+            time.sleep(0.4)
+        except Exception:
+            pass
+
+    return name
 
 
 # ─────────────────────────────────────────────
@@ -775,103 +819,78 @@ def main_scraper(limit: int = 100):
             contact_x = layout.sidebar_mid_x
             contact_y = layout.contact_y(slot_idx)
 
-            # Bỏ qua nếu contact_y nằm ngoài sidebar
             if contact_y >= layout.sidebar_bottom:
                 break
 
-            log.info("[LOOP] Click slot [%d] tại (%d, %d)…",
+            # ── Bước 1: Click vào contact trong sidebar ─────────────────────
+            log.info("[LOOP] [%d/%s] Click slot [%d] tại (%d, %d)…",
+                     total_scraped + 1,
+                     "∞" if limit >= 999999 else str(limit),
                      slot_idx, contact_x, contact_y)
-
-            # ── Click vào contact ──
             try:
                 auto.Click(contact_x, contact_y)
             except Exception as e:
                 log.warning("[UI] Click lỗi slot %d: %s", slot_idx, e)
                 continue
 
-            time.sleep(CLICK_PAUSE)
+            time.sleep(CLICK_PAUSE)   # chờ chat panel load
 
-            # ── Dedup key theo vị trí (slot + round) — KHOÁ DEIN ──
-            # doc.Name luôn trả về 'Zalo' với Electron, không dùng được.
-            # Dùng vị trí để đảm bảo mỗi slot chỉ thu thập 1 lần/vòng cuộn.
+            # ── Dedup theo vị trí (slot + round) ────────────────────────────
             dedup_key = f"s{slot_idx}_r{scroll_round}"
             if dedup_key in scraped_names:
-                # Đã xử lý slot này trong vòng cuộn này rồi
                 continue
 
-            # contact_name sẽ được xác định sau khi đọc clipboard
-            contact_name = f"Khách_{dedup_key}"   # placeholder
+            # ── Bước 2: Click ảnh đại diện → lấy tên chính xác ─────────────
+            fallback_name = f"Khách_{dedup_key}"
+            contact_name  = _get_name_from_avatar_popup(layout, fallback=fallback_name)
+            log.info("[LOOP] Tên khách: '%s'", contact_name)
 
-            log.info("[LOOP] Contact: '%s'", contact_name)
+            # ── Dedup theo tên thật ──────────────────────────────────────────
+            name_key = contact_name.strip().lower()
+            if name_key in scraped_names:
+                log.info("[DEDUP] Bỏ qua '%s' — đã cào rồi.", contact_name)
+                continue
 
-            # ── Đọc text qua accessibility ──
+            # ── Bước 3: Scroll to top + Ctrl+A + Ctrl+C ─────────────────────
+            # (popup đã được đóng trong _get_name_from_avatar_popup)
             raw_texts = _get_chat_texts_from_accessibility(layout)
-
-            # Fallback: đọc qua clipboard
             if not raw_texts:
                 log.info("[READ] Accessibility rỗng → thử clipboard…")
                 clip_text = _copy_chat_content(layout)
                 if clip_text:
                     raw_texts = [clip_text]
 
-            # ── Parse (lần 1: customer_name = "" để auto-detect) ──
-            # Không đoán tên từ dòng đầu clipboard (dễ lấy nhầm message).
-            # Để parse_zalo_texts phân loại BOT ("Bạn") và USER (tên thực),
-            # sau đó lấy tên USER làm contact_name.
-            parsed_logs, account_senders = parse_zalo_texts(raw_texts, customer_name="")
+            if not raw_texts:
+                log.warning("[LOOP] Không đọc được nội dung chat '%s' — bỏ qua.", contact_name)
+                scraped_names.add(dedup_key)
+                continue
 
-            # ── Auto-detect customer name từ USER messages ──────
-            user_msgs = [m for m in parsed_logs if m.get("role") == "USER"]
+            # ── Bước 4: Parse — customer_name đã biết → 100% chính xác ─────
+            parsed_logs, account_senders = parse_zalo_texts(raw_texts,
+                                                            customer_name=contact_name)
             bot_msgs  = [m for m in parsed_logs if m.get("role") == "BOT"]
 
-            if user_msgs:
-                # Sender xuất hiện nhiều nhất trong USER msgs = khách hàng
-                from collections import Counter
-                user_sender_counts = Counter(m["sender"] for m in user_msgs)
-                contact_name = user_sender_counts.most_common(1)[0][0]
-            elif parsed_logs:
-                # Fallback: sender đầu tiên không phải self-alias
-                SELF = {"bạn", "ban", "you"}
-                contact_name = next(
-                    (m["sender"] for m in parsed_logs
-                     if m["sender"].lower() not in SELF),
-                    f"Khách_{dedup_key}"
-                )
-            # else: giữ placeholder "Khách_{dedup_key}"
-
-            # account_senders = BOT senders trừ "Bạn" variants
+            # Lọc account_senders (BOT senders, bỏ biến thể "Bạn")
             SELF_SET = {"bạn", "ban", "you"}
             account_senders = sorted(set(
                 m["sender"] for m in bot_msgs
                 if m["sender"].lower() not in SELF_SET
             ))
 
-            log.info("[PARSE] Parse được %d tin nhắn — Khách: '%s' | BOT: %s",
-                     len(parsed_logs), contact_name,
-                     ", ".join(account_senders) or "(Bạn)")
+            user_cnt = len([m for m in parsed_logs if m.get("role") == "USER"])
+            log.info("[PARSE] %d tin nhắn — Khách: '%s' (%d) | BOT: %s (%d)",
+                     len(parsed_logs), contact_name, user_cnt,
+                     ", ".join(account_senders) or "(Bạn)", len(bot_msgs))
 
-            # ── Dedup theo TÊN THẬT (sau khi detect) ───────────────
-            # Cả 2 dedup: positional key (dedup slot) + tên thật (dedup person)
-            name_key = contact_name.strip().lower()
-            if name_key in scraped_names or name_key.startswith("khách_"):
-                # Đã cào người này rồi (hoặc không detect được tên)
-                if name_key in scraped_names:
-                    log.info("[DEDUP] Bỏ qua '%s' — đã cào rồi.", contact_name)
-                    continue
-
-            log.info("[PARSE] Parse được %d tin nhắn — Khách: '%s' | BOT: %s",
-                     len(parsed_logs), contact_name,
-                     ", ".join(account_senders) or "(Bạn)")
-
-            # ── Push ──
+            # ── Bước 5: Push lên local server ────────────────────────────────
             push_to_server(contact_name, parsed_logs, account_senders)
 
             scraped_names.add(dedup_key)   # positional key
-            scraped_names.add(name_key)    # name-based key (chống trùng thật)
+            scraped_names.add(name_key)    # name key
             total_scraped += 1
             found_new_in_pass = True
-            limit_str = "∞" if limit >= 999999 else str(limit)
-            log.info("[LOOP] Tiến độ: %d/%s người đã cào.", total_scraped, limit_str)
+            log.info("[LOOP] Tiến độ: %d/%s",
+                     total_scraped, "∞" if limit >= 999999 else str(limit))
 
         # ── Cuộn sidebar ──────────────────────────────────────
         if not found_new_in_pass:

@@ -208,20 +208,22 @@ class ZaloLayout:
 #  ĐỌC TÊN CONTACT & CHAT QUA CLIPBOARD
 # ─────────────────────────────────────────────
 
-def _get_name_from_avatar_popup(layout: ZaloLayout, fallback: str = "") -> str:
-    """
-    Lấy tên khách hàng bằng cách click vào ảnh đại diện trong chat header.
+GROUP_KEYWORDS = {
+    "thanh vien", "thanh vien nhom", "truong nhom", "roi nhom",
+    "members", "group admin", "cai dat nhom", "tao nhom",
+    # Tiếng Việt có dấu (sẽ của được strip dấu trước khi so sánh)
+    "thành viên", "thành viên nhóm", "trưởng nhóm", "rời nhóm",
+    "cài đặt nhóm", "tạo nhóm", "xem thêm",
+}
 
-    Quy trình:
-    1. Click vào avatar (góc trái trên của chat panel)
-    2. Zalo mở popup/card thông tin liên hệ
-    3. Thử đọc tên qua clipboard (click name text → Ctrl+C)
-    4. Đóng popup bằng Escape
-    Trả về tên tìm được hoặc fallback nếu không đọc được.
+def _get_name_from_avatar_popup(layout: ZaloLayout, fallback: str = "") -> tuple:
     """
+    Lấy tên khách hàng + phát hiện nhóm qua popup ảnh đại diện.
+    Trả về: (name: str, is_group: bool)
+    """
+    is_group = False
+    name     = fallback
     try:
-        # ── Tọa độ avatar trong chat header ──────────────────────────────
-        # Zalo PC: avatar nằm ở góc trái trên của chat panel header
         # Thường tại (chat_left + 20, chat_top + 28) — avatar 40×40px
         avatar_x = layout.chat_left + 20
         avatar_y = layout.chat_top + 28
@@ -246,16 +248,24 @@ def _get_name_from_avatar_popup(layout: ZaloLayout, fallback: str = "") -> str:
         time.sleep(0.4)
 
         raw = _read_clipboard().strip()
-        # Lọc: tên thường là 1 dòng, ≤ 60 ký tự, không chứa URL
-        lines = [l.strip() for l in raw.split("\n") if l.strip()]
-        candidate = lines[0] if lines else ""
-        if 0 < len(candidate) <= 60 and "http" not in candidate:
-            log.info("[AVATAR] ✅ Đọc được tên: '%s'", candidate)
-            name = candidate
-        else:
-            log.warning("[AVATAR] Clipboard không hợp lệ ('%s') → dùng fallback",
-                        candidate[:40] if candidate else "(rỗng)")
-            name = fallback
+        raw_lower = raw.lower()
+
+        # ── Kiểm tra nhóm: nếu popup chứa từ khóa nhóm ───────────────
+        for kw in GROUP_KEYWORDS:
+            if kw in raw_lower:
+                log.info("[AVATAR] 👥 Nhóm chat (keyword='%s') — bỏ qua.", kw)
+                is_group = True
+                break
+
+        if not is_group:
+            lines = [l.strip() for l in raw.split("\n") if l.strip()]
+            candidate = lines[0] if lines else ""
+            if 0 < len(candidate) <= 60 and "http" not in candidate:
+                log.info("[AVATAR] ✅ Tên khách: '%s'", candidate)
+                name = candidate
+            else:
+                log.warning("[AVATAR] Clipboard không hợp lệ ('%s') → fallback",
+                            candidate[:40] if candidate else "(rỗng)")
 
     except Exception as e:
         log.warning("[AVATAR] Lỗi khi đọc popup: %s", e)
@@ -269,7 +279,7 @@ def _get_name_from_avatar_popup(layout: ZaloLayout, fallback: str = "") -> str:
         except Exception:
             pass
 
-    return name
+    return name, is_group
 
 
 # ─────────────────────────────────────────────
@@ -840,9 +850,15 @@ def main_scraper(limit: int = 100):
             if dedup_key in scraped_names:
                 continue
 
-            # ── Bước 2: Click ảnh đại diện → lấy tên chính xác ─────────────
+            # ── Bước 2: Click ảnh đại diện → lấy tên + kiểm tra nhóm ──────────
             fallback_name = f"Khách_{dedup_key}"
-            contact_name  = _get_name_from_avatar_popup(layout, fallback=fallback_name)
+            contact_name, is_group = _get_name_from_avatar_popup(layout, fallback=fallback_name)
+
+            if is_group:
+                log.info("[LOOP] 👥 Nhóm chat — bỏ qua, qua contact tiếp theo.")
+                scraped_names.add(dedup_key)   # đánh dấu đã xử lý slot này
+                continue
+
             log.info("[LOOP] Tên khách: '%s'", contact_name)
 
             # ── Dedup theo tên thật ──────────────────────────────────────────
